@@ -3,7 +3,7 @@ import gzip
 import re
 
 # URL for the official CC-CEDICT gzip file
-CEDICT_URL = "https://www.mdbg.net/chinese/dictionary?page=cedict&download=cedict_1_0_ts_utf-8_mdbg.txt.gz"
+CEDICT_URL = "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.txt.gz"
 
 class ChineseDictionary:
     def __init__(self):
