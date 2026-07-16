@@ -34,36 +34,6 @@ async def ping(interaction: discord.Interaction):
     # Slash commands use interaction.response.send_message instead of ctx.send
     await interaction.response.send_message(f"Pong! 🏓 ({latency}ms)")
 
-
-# ==========================================
-# DICTIONARY SLASH COMMAND
-# ==========================================
-@bot.tree.command(name="define", description="Look up a Chinese word (Simplified, Traditional, or Pinyin)")
-@app_commands.describe(query="The Chinese characters or Pinyin you want to define")
-async def define(interaction: discord.Interaction, query: str):
-    # Defer response to buy time in case the search is slow (though it's usually instant)
-    await interaction.response.defer()
-    
-    result = dictionary.search(query)
-    
-    if not result:
-        await interaction.followup.send(f"Sorry, I couldn't find any entries for '{query}'.")
-        return
-        
-    # Format the definitions cleanly
-    definitions_formatted = "\n".join([f"• {d}" for d in result['definitions']])
-    
-    # Create a nice Discord Embed
-    embed = discord.Embed(
-        title=f"{result['simplified']} ({result['traditional']})",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="Pinyin", value=f"`{result['pinyin']}`", inline=False)
-    embed.add_field(name="Definitions", value=definitions_formatted, inline=False)
-    
-    await interaction.followup.send(embed=embed)
-
-
 # ==========================================
 # 2. THE SYNC COMMAND (Prefix-based)
 # ==========================================
@@ -77,5 +47,73 @@ async def sync(ctx):
         await ctx.send(f"Successfully synced {len(synced)} slash command(s) globally!")
     except Exception as e:
         await ctx.send(f"Failed to sync commands: {e}")
+
+
+# ==========================================
+# ADVANCED DICTIONARY SLASH COMMAND
+# ==========================================
+@bot.tree.command(name="define", description="Look up a Chinese word with beautiful tone marks, measure words, and variants!")
+@app_commands.describe(query="The Chinese characters or Pinyin you want to define")
+async def define(interaction: discord.Interaction, query: str):
+    await interaction.response.defer()
+    
+    result = dictionary.search(query)
+    
+    if not result:
+        await interaction.followup.send(f"❌ Sorry, I couldn't find any entries for **'{query}'**.")
+        return
+        
+    # Main Character Display (Simplified & Traditional)
+    title_display = f"{result['simplified']}"
+    if result['traditional'] != result['simplified']:
+        title_display += f" ({result['traditional']})"
+
+    embed = discord.Embed(
+        title=title_display,
+        color=discord.Color.green()
+    )
+    
+    # 1. Display beautiful Pinyin Tone Marks
+    embed.add_field(
+        name="Pronunciation", 
+        value=f"🗣️ **{result['pinyin']}** *(raw: {result['pinyin_raw']})*", 
+        inline=False
+    )
+    
+    # 2. Format English Definitions cleanly
+    definitions_formatted = "\n".join([f"{i}. {d}" for i, d in enumerate(result['definitions'], 1)])
+    if not definitions_formatted:
+        definitions_formatted = "*No direct translation available (see variants below).*"
+        
+    embed.add_field(
+        name="Definitions", 
+        value=definitions_formatted, 
+        inline=False
+    )
+    
+    # 3. Add Measure Words / Classifiers (if they exist)
+    if result['measure_words']:
+        mw_formatted = ", ".join(result['measure_words'])
+        embed.add_field(
+            name="Measure Words (量词)", 
+            value=f"📏 {mw_formatted}", 
+            inline=False
+        )
+        
+    # 4. Add Variants (if they exist)
+    if result['variants']:
+        variants_formatted = "\n".join([f"• {v}" for v in result['variants']])
+        embed.add_field(
+            name="Character Variants", 
+            value=f"🔄 {variants_formatted}", 
+            inline=False
+        )
+        
+    embed.set_footer(text="Data provided by CC-CEDICT")
+    
+    await interaction.followup.send(embed=embed)
+
+
+
 
 bot.run(TOKEN)
