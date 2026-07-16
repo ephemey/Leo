@@ -1,7 +1,7 @@
 import os
 import discord
 from discord.ext import commands
-from dotenv import load_load
+from dotenv import load_dotenv
 
 # Load environment variables from .env file (local) or system (Railway)
 load_dotenv()
