@@ -150,14 +150,57 @@ class ChineseDictionary:
     def search(self, query: str):
         query_clean = query.strip()
         
+        # 1. Search by Simplified
         if query_clean in self.by_simplified:
             return self.by_simplified[query_clean]
             
+        # 2. Search by Traditional
         if query_clean in self.by_traditional:
             return self.by_traditional[query_clean]
             
+        # 3. Search by Pinyin
         pinyin_query = query_clean.lower().replace(" ", "")
         if pinyin_query in self.by_pinyin:
             return self.by_pinyin[pinyin_query]
+            
+        # 4. Fallback: Search by English Definition with Relevance Sorting
+        english_query = query_clean.lower()
+        matches = []
+        
+        # 1. Collect ALL potential matches first
+        for simp, entry in self.by_simplified.items():
+            for definition in entry["definitions"]:
+                def_lower = definition.lower()
+                
+                # Check for word boundaries to avoid 'cat' matching 'catastrophe'
+                if re.search(r'\b' + re.escape(english_query) + r'\b', def_lower):
+                    # Store metadata for sorting
+                    matches.append({
+                        'entry': entry,
+                        'is_exact': english_query == def_lower,
+                        'position': def_lower.find(english_query),
+                        'def_length': len(definition),
+                        'char_length': len(simp)
+                    })
+                    break 
+
+        if not matches:
+            return None
+
+        # 2. Sort the matches based on your new relevance rules
+        matches.sort(key=lambda x: (
+            not x['is_exact'],   # Exact matches first
+            x['position'],       # Keyword at the start of the definition first
+            x['def_length'],     # Shorter/simpler definitions first
+            x['char_length']     # Shorter Chinese words (common vocabulary) first
+        ))
+
+        # 3. Extract just the entry data for the top 5
+        top_results = [m['entry'] for m in matches[:5]]
+
+        # 4. Return as single result or list for the main.py handler
+        if len(top_results) == 1:
+            return top_results
+        return top_results
             
         return None

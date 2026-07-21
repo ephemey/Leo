@@ -14,7 +14,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 dictionary = ChineseDictionary()
 
@@ -23,6 +23,12 @@ async def on_ready():
     dictionary.load_dictionary()
     print(f"Logged in as {bot.user.name}!")
     print("------")
+    # Automatically sync slash commands globally on startup
+    try:
+        synced = await bot.tree.sync()
+        print(f"Successfully synced {len(synced)} slash command(s) globally.")
+    except Exception as e:
+        print(f"Error syncing commands: {e}")
 
 # ==========================================
 # 1. THE SLASH COMMAND
@@ -52,8 +58,8 @@ async def sync(ctx):
 # ==========================================
 # ADVANCED DICTIONARY SLASH COMMAND
 # ==========================================
-@bot.tree.command(name="define", description="Look up a Chinese word with beautiful tone marks, measure words, and variants!")
-@app_commands.describe(query="The Chinese characters or Pinyin you want to define")
+@bot.tree.command(name="define", description="Look up a Chinese word or search in English!")
+@app_commands.describe(query="Chinese characters, Pinyin, or an English word")
 async def define(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
     
@@ -63,7 +69,34 @@ async def define(interaction: discord.Interaction, query: str):
         await interaction.followup.send(f"❌ Sorry, I couldn't find any entries for **'{query}'**.")
         return
         
-    # Main Character Display (Simplified & Traditional)
+    # Scenario A: The search returned multiple English results (a list)
+    if isinstance(result, list):
+        embed = discord.Embed(
+            title=f"🔍 English Search Results for: '{query}'",
+            description="Here are the top matches I found:",
+            color=discord.Color.blue()
+        )
+        
+        for i, entry in enumerate(result, 1):
+            # Format: "1. 你好 (nǐ hǎo)"
+            name = f"{i}. {entry['simplified']}"
+            if entry['traditional'] != entry['simplified']:
+                name += f" ({entry['traditional']})"
+            name += f" — {entry['pinyin']}"
+            
+            # Show the first 2 definitions to keep the embed clean
+            defs = entry['definitions'][:2]
+            defs_text = "; ".join(defs)
+            if len(entry['definitions']) > 2:
+                defs_text += "..."
+                
+            embed.add_field(name=name, value=defs_text, inline=False)
+            
+        embed.set_footer(text="Type /define with one of the Chinese words above for full details!")
+        await interaction.followup.send(embed=embed)
+        return
+
+    # Scenario B: Single direct result (Simplified, Traditional, Pinyin, or single English match)
     title_display = f"{result['simplified']}"
     if result['traditional'] != result['simplified']:
         title_display += f" ({result['traditional']})"
@@ -73,17 +106,15 @@ async def define(interaction: discord.Interaction, query: str):
         color=discord.Color.green()
     )
     
-    # 1. Display beautiful Pinyin Tone Marks
     embed.add_field(
         name="Pronunciation", 
         value=f"🗣️ **{result['pinyin']}** *(raw: {result['pinyin_raw']})*", 
         inline=False
     )
     
-    # 2. Format English Definitions cleanly
     definitions_formatted = "\n".join([f"{i}. {d}" for i, d in enumerate(result['definitions'], 1)])
     if not definitions_formatted:
-        definitions_formatted = "*No direct translation available (see variants below).*"
+        definitions_formatted = "*No direct translation available.*"
         
     embed.add_field(
         name="Definitions", 
@@ -91,26 +122,15 @@ async def define(interaction: discord.Interaction, query: str):
         inline=False
     )
     
-    # 3. Add Measure Words / Classifiers (if they exist)
     if result['measure_words']:
         mw_formatted = ", ".join(result['measure_words'])
-        embed.add_field(
-            name="Measure Words (量词)", 
-            value=f"📏 {mw_formatted}", 
-            inline=False
-        )
+        embed.add_field(name="Measure Words (量词)", value=f"📏 {mw_formatted}", inline=False)
         
-    # 4. Add Variants (if they exist)
     if result['variants']:
         variants_formatted = "\n".join([f"• {v}" for v in result['variants']])
-        embed.add_field(
-            name="Character Variants", 
-            value=f"🔄 {variants_formatted}", 
-            inline=False
-        )
+        embed.add_field(name="Character Variants", value=f"🔄 {variants_formatted}", inline=False)
         
     embed.set_footer(text="Data provided by CC-CEDICT")
-    
     await interaction.followup.send(embed=embed)
 
 
