@@ -5,6 +5,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from dictionary import ChineseDictionary
+from karaoke import setup as register_karaoke_commands
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +18,8 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 dictionary = ChineseDictionary()
+register_karaoke_commands(bot)
+
 
 @bot.event
 async def on_ready():
@@ -39,6 +42,7 @@ async def ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     # Slash commands use interaction.response.send_message instead of ctx.send
     await interaction.response.send_message(f"Pong! 🏓 ({latency}ms)")
+
 
 # ==========================================
 # 2. THE SYNC COMMAND (Prefix-based)
