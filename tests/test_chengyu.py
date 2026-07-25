@@ -68,6 +68,58 @@ class ChengyuGameTests(unittest.TestCase):
         self.assertIn("Alice", message)
         self.assertIn("Bob", message)
 
+    def test_dead_end_is_detected_when_all_continuations_are_used(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        game.dictionary = type(
+            "FakeDict",
+            (),
+            {
+                "by_simplified": {
+                    "画龙点睛": {"simplified": "画龙点睛", "pinyin_raw": "hua4 long2 dian3 jing1", "definitions": ["idiom: add the finishing touch"]},
+                    "惊天动地": {"simplified": "惊天动地", "pinyin_raw": "jing1 tian1 dong4 di4", "definitions": ["idiom: earth-shattering"]},
+                }
+            },
+        )()
+        game.mark_used_entry(1, 42, "惊天动地")
+
+        current_entry = {"simplified": "画龙点睛", "pinyin_raw": "hua4 long2 dian3 jing1", "definitions": ["idiom: add the finishing touch"]}
+        self.assertTrue(game.is_dead_end(1, 42, current_entry))
+
+    def test_get_random_unused_idiom_returns_an_unused_entry(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        game.dictionary = type(
+            "FakeDict",
+            (),
+            {
+                "by_simplified": {
+                    "画龙点睛": {"simplified": "画龙点睛", "pinyin_raw": "hua4 long2 dian3 jing1", "definitions": ["idiom: add the finishing touch"]},
+                    "惊天动地": {"simplified": "惊天动地", "pinyin_raw": "jing1 tian1 dong4 di4", "definitions": ["idiom: earth-shattering"]},
+                    "地久天长": {"simplified": "地久天长", "pinyin_raw": "di4 jiu3 tian1 chang2", "definitions": ["idiom: everlasting"]},
+                }
+            },
+        )()
+        game.mark_used_entry(1, 42, "惊天动地")
+
+        entry = game.get_random_unused_idiom(1, 42)
+        self.assertIsNotNone(entry)
+        self.assertIn(entry["simplified"], {"画龙点睛", "地久天长"})
+
+    def test_dead_end_message_includes_username_and_idiom(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        continuation_entry = {"simplified": "惊天动地", "definitions": ["earth-shattering"]}
+        message = game.format_dead_end_message("Alice", continuation_entry)
+
+        self.assertIn("Alice", message)
+        self.assertIn("惊天动地", message)
+
+    def test_only_idiom_entries_are_valid(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        non_idiom = {"simplified": "敦煌石窟", "pinyin_raw": "dun1 huang2 shi2 ku1", "definitions": ["cave complex in Dunhuang"]}
+        idiom = {"simplified": "画龙点睛", "pinyin_raw": "hua4 long2 dian3 jing1", "definitions": ["idiom: add the finishing touch"]}
+
+        self.assertFalse(game.is_valid_chengyu(non_idiom))
+        self.assertTrue(game.is_valid_chengyu(idiom))
+
     def test_reset_timer_is_positive(self):
         game = chengyu.ChengyuGame(db_path=':memory:')
         delta = game.get_time_until_reset()

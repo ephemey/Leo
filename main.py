@@ -66,6 +66,13 @@ async def apply_monthly_winner_roles(guild: discord.Guild):
     channel = guild.get_channel(configured_channel_id)
     if channel is not None and hasattr(channel, "send"):
         await channel.send(chengyu_game.format_reset_message(winners))
+        # After announcing the reset and winners, post a random unused idiom to restart the chain
+        continuation = chengyu_game.get_random_unused_idiom(guild.id, channel.id)
+        if continuation is not None:
+            continuation_text = continuation.get("simplified") or continuation.get("traditional") or "an idiom"
+            chengyu_game.mark_used_entry(guild.id, channel.id, continuation_text)
+            chengyu_game.set_channel_state(guild.id, channel.id, continuation)
+            await channel.send(f"🔁 Starting a new chain with: {continuation_text}")
 
 
 @bot.event
@@ -111,6 +118,19 @@ async def on_message(message: discord.Message):
     chengyu_game.set_channel_state(message.guild.id, message.channel.id, entry)
     await message.add_reaction("✅")
 
+    if chengyu_game.is_dead_end(message.guild.id, message.channel.id, entry):
+        continuation_entry = chengyu_game.get_random_unused_idiom(message.guild.id, message.channel.id)
+        if continuation_entry is None:
+            await message.channel.send(
+                f"💥 {message.author.display_name or message.author.name} has killed the game by reaching a dead end, and there are no unused idioms left. The game is over :("
+            )
+            return
+
+        continuation_entry_text = continuation_entry.get("simplified") or continuation_entry.get("traditional") or "an idiom"
+        chengyu_game.mark_used_entry(message.guild.id, message.channel.id, continuation_entry_text)
+        chengyu_game.set_channel_state(message.guild.id, message.channel.id, continuation_entry)
+        await message.channel.send(chengyu_game.format_dead_end_message(message.author.display_name or message.author.name, continuation_entry))
+
 
 @bot.tree.command(name="cysetup", description="Set the text channel and optional winner role for Chengyu Jielong")
 @app_commands.describe(
@@ -123,6 +143,23 @@ async def cysetup(interaction: discord.Interaction, channel: discord.TextChannel
         await interaction.response.send_message(f"✅ Chengyu Jielong is set to {channel.mention} with the {role.mention} winner role.")
     else:
         await interaction.response.send_message(f"✅ Chengyu Jielong is set to {channel.mention}. No winner role configured.")
+    # Clear monthly scores and used entries when reconfiguring
+    try:
+        chengyu_game.reset_monthly_state(interaction.guild_id)
+    except Exception:
+        # ignore DB hiccups for now
+        pass
+
+    # Post a random starting idiom in the configured channel to kick off play
+    try:
+        starter = chengyu_game.get_random_unused_idiom(interaction.guild_id, channel.id)
+        if starter:
+            starter_text = starter.get("simplified") or starter.get("traditional") or "an idiom"
+            chengyu_game.mark_used_entry(interaction.guild_id, channel.id, starter_text)
+            chengyu_game.set_channel_state(interaction.guild_id, channel.id, starter)
+            await channel.send(f"🔁 Starting a new chain with: {starter_text}")
+    except Exception:
+        pass
 
 
 @bot.tree.command(name="ping", description="Replies with Pong and the bot's latency!")
@@ -191,6 +228,29 @@ async def cyscore(interaction: discord.Interaction, user: discord.Member | None 
 
     await interaction.response.send_message(
         f"📊 {target_user.display_name} has {score['valid_entries']} Chengyu point(s) this month."
+    )
+
+
+@bot.tree.command(name="cycurrent", description="Show the most recent valid Chengyu entry in this channel")
+async def cycurrent(interaction: discord.Interaction):
+    if not interaction.guild_id or not interaction.channel:
+        await interaction.response.send_message("This command must be used in a guild text channel.")
+        return
+
+    state = chengyu_game.get_channel_state(interaction.guild_id, interaction.channel.id)
+    entry = state.get("entry")
+
+    if not entry:
+        await interaction.response.send_message("ℹ️ No previous valid Chengyu entry found in this channel.")
+        return
+
+    entry_text = entry.get("simplified") or entry.get("traditional") or "(unknown)"
+    pinyin = entry.get("pinyin") or entry.get("pinyin_raw") or ""
+    defs = entry.get("definitions") or []
+    defs_text = "; ".join(defs[:3]) if defs else "(no definition available)"
+
+    await interaction.response.send_message(
+        f"📌 Previous Chengyu: {entry_text}\n🗣️ {pinyin}\n📚 {defs_text}"
     )
 
 
