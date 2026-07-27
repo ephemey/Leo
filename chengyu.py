@@ -61,6 +61,34 @@ class ChengyuGame:
 
     def _normalize_pinyin(self, syllable: str) -> str:
         syllable = syllable.lower().replace("u:", "v")
+        accent_map = str.maketrans({
+            "ā": "a",
+            "á": "a",
+            "ǎ": "a",
+            "à": "a",
+            "ē": "e",
+            "é": "e",
+            "ě": "e",
+            "è": "e",
+            "ī": "i",
+            "í": "i",
+            "ǐ": "i",
+            "ì": "i",
+            "ō": "o",
+            "ó": "o",
+            "ǒ": "o",
+            "ò": "o",
+            "ū": "u",
+            "ú": "u",
+            "ǔ": "u",
+            "ù": "u",
+            "ǖ": "v",
+            "ǘ": "v",
+            "ǚ": "v",
+            "ǜ": "v",
+            "ü": "v",
+        })
+        syllable = syllable.translate(accent_map)
         return re.sub(r"\d", "", syllable)
 
     def entries_match_chain(self, previous_entry: dict, current_entry: dict) -> bool:
@@ -134,20 +162,25 @@ class ChengyuGame:
         )
 
     def _is_idiom_entry(self, entry: Optional[dict]) -> bool:
-        definitions = entry.get("definitions") if entry else None
-        if not definitions:
+        if not entry:
             return False
 
-        for definition in definitions:
-            if re.search(r"\bidiom\b", definition, flags=re.IGNORECASE):
-                return True
+        definitions = entry.get("definitions")
+        if definitions:
+            for definition in definitions:
+                if re.search(r"\bidiom\b", definition, flags=re.IGNORECASE):
+                    return True
+
+        if entry.get("word") and entry.get("pinyin") and entry.get("explanation"):
+            return True
+
         return False
 
     def is_valid_chengyu(self, entry: Optional[dict]) -> bool:
         if not entry:
             return False
 
-        text = (entry.get("simplified") or "").strip()
+        text = (entry.get("simplified") or entry.get("traditional") or entry.get("word") or "").strip()
         if not text or len(text) != 4:
             return False
 

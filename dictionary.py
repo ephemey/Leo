@@ -1,3 +1,5 @@
+import json
+import os
 import urllib.request
 import re
 import sys
@@ -202,5 +204,128 @@ class ChineseDictionary:
         if len(top_results) == 1:
             return top_results
         return top_results
-            
+
+        return None
+
+
+XINHUA_BASE_URL = "https://raw.githubusercontent.com/pwxcoo/chinese-xinhua/master/data/"
+XINHUA_FILES = [
+    ("idiom.json", "idiom"),
+    ("word.json", "word"),
+    ("ci.json", "ci"),
+    ("xiehouyu.json", "xiehouyu"),
+]
+
+
+class XinhuaDictionary:
+    """Fallback Chinese dictionary sourced from pwxcoo/chinese-xinhua.
+
+    Downloads the four dataset files on first run and caches them to disk
+    under ``data_dir`` (default: ``data/``).  Subsequent startups load from
+    disk without hitting the network.
+
+    ``search(query)`` returns ``(kind, entry)`` or ``None``:
+      - kind ``"idiom"``    – entry has keys: word, pinyin, explanation, derivation, example, abbreviation
+      - kind ``"word"``     – entry has keys: word, oldword, strokes, pinyin, radicals, explanation, more
+      - kind ``"ci"``       – entry has keys: ci, explanation
+      - kind ``"xiehouyu"`` – entry has keys: riddle, answer
+    """
+
+    def __init__(self, data_dir: str | None = None):
+        self.data_dir = data_dir or os.getenv("XINHUA_DATA_DIR", "data")
+        self.idioms: dict[str, dict] = {}
+        self.words: dict[str, dict] = {}
+        self.ci: dict[str, dict] = {}
+        self.xiehouyu: dict[str, dict] = {}
+
+    def _cache_path(self, filename: str) -> str:
+        return os.path.join(self.data_dir, filename)
+
+    def to_chengyu_entry(self, entry: dict) -> dict | None:
+        word = entry.get("word", "").strip()
+        if not word:
+            return None
+
+        pinyin_raw = entry.get("pinyin", "").strip()
+        explanation = entry.get("explanation", "").strip()
+        definitions = [f"idiom: {explanation}"] if explanation else ["idiom"]
+
+        return {
+            "simplified": word,
+            "traditional": word,
+            "pinyin_raw": pinyin_raw,
+            "pinyin": pinyin_raw,
+            "definitions": definitions,
+            "measure_words": [],
+            "variants": [],
+        }
+
+    def _download(self, filename: str, dest: str) -> None:
+        url = XINHUA_BASE_URL + filename
+        print(f"Downloading {url} ...", flush=True)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                data = response.read()
+            os.makedirs(self.data_dir, exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(data)
+            print(f"Saved {dest} ({len(data):,} bytes)", flush=True)
+        except Exception as e:
+            print(f"ERROR: Failed to download {url}: {e}", file=sys.stderr, flush=True)
+            raise
+
+    def load(self) -> None:
+        """Download (if needed) and parse all four xinhua datasets."""
+        for filename, kind in XINHUA_FILES:
+            dest = self._cache_path(filename)
+            if not os.path.exists(dest):
+                self._download(filename, dest)
+
+            try:
+                with open(dest, "r", encoding="utf-8") as f:
+                    entries = json.load(f)
+            except Exception as e:
+                print(f"ERROR: Failed to load {dest}: {e}", file=sys.stderr, flush=True)
+                continue
+
+            if kind == "idiom":
+                for entry in entries:
+                    w = entry.get("word", "").strip()
+                    if w:
+                        self.idioms[w] = entry
+            elif kind == "word":
+                for entry in entries:
+                    w = entry.get("word", "").strip()
+                    if w:
+                        self.words[w] = entry
+            elif kind == "ci":
+                for entry in entries:
+                    w = entry.get("ci", "").strip()
+                    if w:
+                        self.ci[w] = entry
+            elif kind == "xiehouyu":
+                for entry in entries:
+                    r = entry.get("riddle", "").strip()
+                    if r:
+                        self.xiehouyu[r] = entry
+
+        print(
+            f"XinhuaDictionary loaded: {len(self.idioms)} idioms, "
+            f"{len(self.words)} chars, {len(self.ci)} ci, "
+            f"{len(self.xiehouyu)} xiehouyu",
+            flush=True,
+        )
+
+    def search(self, query: str) -> tuple[str, dict] | None:
+        """Return ``(kind, entry)`` from the first dataset that matches *query*, or ``None``."""
+        q = query.strip()
+        if q in self.idioms:
+            return ("idiom", self.idioms[q])
+        if q in self.words:
+            return ("word", self.words[q])
+        if q in self.ci:
+            return ("ci", self.ci[q])
+        if q in self.xiehouyu:
+            return ("xiehouyu", self.xiehouyu[q])
         return None

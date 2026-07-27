@@ -120,6 +120,23 @@ class ChengyuGameTests(unittest.TestCase):
         self.assertFalse(game.is_valid_chengyu(non_idiom))
         self.assertTrue(game.is_valid_chengyu(idiom))
 
+    def test_xinhua_idiom_entries_are_valid(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        xinhua_idiom = {
+            "word": "阿鼻地狱",
+            "pinyin": "ā bí dì yù",
+            "explanation": "阿鼻梵语的译音，意译为无间，即痛苦无有间断之意。",
+        }
+
+        self.assertTrue(game.is_valid_chengyu(xinhua_idiom))
+
+    def test_chain_matches_across_tone_marked_pinyin(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        previous_entry = {"pinyin_raw": "jing1 tian1 dong4 di4"}
+        current_entry = {"pinyin_raw": "dì jiǔ tiān cháng"}
+
+        self.assertTrue(game.entries_match_chain(previous_entry, current_entry))
+
     def test_reset_timer_is_positive(self):
         game = chengyu.ChengyuGame(db_path=':memory:')
         delta = game.get_time_until_reset()

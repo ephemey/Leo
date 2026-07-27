@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
-from dictionary import ChineseDictionary
+from dictionary import ChineseDictionary, XinhuaDictionary
 from karaoke import setup as register_karaoke_commands
 import chengyu
 
@@ -21,6 +21,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 dictionary = ChineseDictionary()
+xinhua_dictionary = XinhuaDictionary()
 register_karaoke_commands(bot)
 chengyu_game = chengyu.ChengyuGame(dictionary=dictionary, db_path=os.getenv("CHENGYU_DB_PATH"))
 
@@ -28,6 +29,22 @@ chengyu_game = chengyu.ChengyuGame(dictionary=dictionary, db_path=os.getenv("CHE
 @bot.event
 async def on_ready():
     dictionary.load_dictionary()
+    xinhua_dictionary.load()
+
+    for idiom in xinhua_dictionary.idioms.values():
+        converted = xinhua_dictionary.to_chengyu_entry(idiom)
+        if not converted:
+            continue
+
+        simplified = converted["simplified"]
+        if simplified in dictionary.by_simplified:
+            continue
+
+        dictionary.by_simplified[simplified] = converted
+        dictionary.by_traditional[simplified] = converted
+        dictionary.by_pinyin[converted["pinyin_raw"].lower().replace(" ", "")] = converted
+        dictionary.by_pinyin[converted["pinyin"].lower().replace(" ", "")] = converted
+
     print(f"Logged in as {bot.user.name}!")
     print("------")
     try:
@@ -254,6 +271,63 @@ async def cycurrent(interaction: discord.Interaction):
     )
 
 
+def _trunc(text: str, limit: int = 1024) -> str:
+    """Truncate text to Discord embed field limit."""
+    if len(text) <= limit:
+        return text
+    return text[:limit - 3] + "..."
+
+
+def format_xinhua_embed(result: tuple[str, dict]) -> discord.Embed:
+    """Build a Discord embed for a chinese-xinhua lookup result."""
+    kind, entry = result
+
+    def skip(val: str) -> bool:
+        return not val or val.strip() in ("无", "")
+
+    if kind == "idiom":
+        embed = discord.Embed(title=entry.get("word", ""), color=discord.Color.orange())
+        pinyin = entry.get("pinyin", "")
+        if pinyin:
+            embed.add_field(name="拼音 Pronunciation", value=f"🗣️ {pinyin}", inline=False)
+        explanation = entry.get("explanation", "")
+        if not skip(explanation):
+            embed.add_field(name="释义 Explanation", value=_trunc(explanation), inline=False)
+        derivation = entry.get("derivation", "")
+        if not skip(derivation):
+            embed.add_field(name="出处 Derivation", value=_trunc(derivation), inline=False)
+        example = entry.get("example", "")
+        if not skip(example):
+            embed.add_field(name="例句 Example", value=_trunc(example), inline=False)
+
+    elif kind == "word":
+        embed = discord.Embed(title=entry.get("word", ""), color=discord.Color.teal())
+        pinyin = entry.get("pinyin", "")
+        if pinyin:
+            embed.add_field(name="拼音 Pronunciation", value=f"🗣️ {pinyin}", inline=True)
+        radicals = entry.get("radicals", "")
+        strokes = entry.get("strokes", "")
+        if radicals or strokes:
+            rad_strokes = f"部首: {radicals}  笔画: {strokes}".strip()
+            embed.add_field(name="部首 / 笔画", value=rad_strokes, inline=True)
+        explanation = entry.get("explanation", "")
+        if not skip(explanation):
+            embed.add_field(name="释义 Explanation", value=_trunc(explanation), inline=False)
+
+    elif kind == "xiehouyu":
+        embed = discord.Embed(title=entry.get("riddle", ""), color=discord.Color.gold())
+        embed.add_field(name="答案 Answer", value=entry.get("answer", ""), inline=False)
+
+    else:  # ci
+        embed = discord.Embed(title=entry.get("ci", ""), color=discord.Color.blurple())
+        explanation = entry.get("explanation", "")
+        if not skip(explanation):
+            embed.add_field(name="释义 Explanation", value=_trunc(explanation), inline=False)
+
+    embed.set_footer(text="Data provided by chinese-xinhua")
+    return embed
+
+
 @bot.command()
 @commands.is_owner()
 async def sync(ctx):
@@ -272,7 +346,13 @@ async def define(interaction: discord.Interaction, query: str):
     result = dictionary.search(query)
 
     if not result:
-        await interaction.followup.send(f"❌ Sorry, I couldn't find any entries for **'{query}'**.")
+        # Fallback to chinese-xinhua when CC-CEDICT has no match
+        xinhua_result = xinhua_dictionary.search(query)
+        if xinhua_result:
+            embed = format_xinhua_embed(xinhua_result)
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send(f"❌ Sorry, I couldn't find any entries for **'{query}'**.")
         return
 
     if isinstance(result, list):
