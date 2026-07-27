@@ -161,21 +161,6 @@ class ChengyuGame:
             f"Here’s a random unused idiom to continue from: {entry_text}"
         )
 
-    def _is_idiom_entry(self, entry: Optional[dict]) -> bool:
-        if not entry:
-            return False
-
-        definitions = entry.get("definitions")
-        if definitions:
-            for definition in definitions:
-                if re.search(r"\bidiom\b", definition, flags=re.IGNORECASE):
-                    return True
-
-        if entry.get("word") and entry.get("pinyin") and entry.get("explanation"):
-            return True
-
-        return False
-
     def is_valid_chengyu(self, entry: Optional[dict]) -> bool:
         if not entry:
             return False
@@ -185,9 +170,6 @@ class ChengyuGame:
             return False
 
         if not all("\u4e00" <= ch <= "\u9fff" for ch in text):
-            return False
-
-        if not self._is_idiom_entry(entry):
             return False
 
         return True
