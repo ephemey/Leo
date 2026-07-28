@@ -1,8 +1,10 @@
 import json
+import logging
 import os
 import urllib.request
 import re
-import sys
+
+logger = logging.getLogger(__name__)
 
 CEDICT_URL = "https://raw.githubusercontent.com/spamscanner/spamscanner/master/cedict_1_0_ts_utf-8_mdbg.txt"
 
@@ -73,7 +75,7 @@ class ChineseDictionary:
         self.by_pinyin = {}
 
     def load_dictionary(self):
-        print("Starting dictionary download from GitHub mirror...", flush=True)
+        logger.info("Starting dictionary download from GitHub mirror...")
         
         req = urllib.request.Request(
             CEDICT_URL, 
@@ -144,10 +146,10 @@ class ChineseDictionary:
                         self.by_pinyin[pinyin_raw.lower().replace(" ", "")] = entry
                         self.by_pinyin[entry["pinyin"].lower().replace(" ", "")] = entry
 
-            print(f"SUCCESS: Loaded {len(self.by_simplified)} entries into memory!", flush=True)
+            logger.info("Loaded %d entries into memory!", len(self.by_simplified))
             
         except Exception as e:
-            print(f"ERROR: Failed to download or parse the dictionary: {e}", file=sys.stderr, flush=True)
+            logger.error("Failed to download or parse the dictionary: %s", e)
 
     def search(self, query: str):
         query_clean = query.strip()
@@ -262,7 +264,7 @@ class XinhuaDictionary:
 
     def _download(self, filename: str, dest: str) -> None:
         url = XINHUA_BASE_URL + filename
-        print(f"Downloading {url} ...", flush=True)
+        logger.info("Downloading %s ...", url)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
@@ -270,9 +272,9 @@ class XinhuaDictionary:
             os.makedirs(self.data_dir, exist_ok=True)
             with open(dest, "wb") as f:
                 f.write(data)
-            print(f"Saved {dest} ({len(data):,} bytes)", flush=True)
+            logger.info("Saved %s (%d bytes)", dest, len(data))
         except Exception as e:
-            print(f"ERROR: Failed to download {url}: {e}", file=sys.stderr, flush=True)
+            logger.error("Failed to download %s: %s", url, e)
             raise
 
     def load(self) -> None:
@@ -286,7 +288,7 @@ class XinhuaDictionary:
                 with open(dest, "r", encoding="utf-8") as f:
                     entries = json.load(f)
             except Exception as e:
-                print(f"ERROR: Failed to load {dest}: {e}", file=sys.stderr, flush=True)
+                logger.error("Failed to load %s: %s", dest, e)
                 continue
 
             if kind == "idiom":
@@ -310,11 +312,12 @@ class XinhuaDictionary:
                     if r:
                         self.xiehouyu[r] = entry
 
-        print(
-            f"XinhuaDictionary loaded: {len(self.idioms)} idioms, "
-            f"{len(self.words)} chars, {len(self.ci)} ci, "
-            f"{len(self.xiehouyu)} xiehouyu",
-            flush=True,
+        logger.info(
+            "XinhuaDictionary loaded: %d idioms, %d chars, %d ci, %d xiehouyu",
+            len(self.idioms),
+            len(self.words),
+            len(self.ci),
+            len(self.xiehouyu),
         )
 
     def search(self, query: str) -> tuple[str, dict] | None:

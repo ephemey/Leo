@@ -1,9 +1,13 @@
+import logging
 import os
 import random
 import re
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class ChengyuGame:
@@ -11,53 +15,55 @@ class ChengyuGame:
         self.dictionary = dictionary
         self.db_path = db_path or os.getenv("CHENGYU_DB_PATH", "chengyu.db")
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._lock = threading.Lock()
         self.channel_states = {}
         self._init_db()
 
     def _init_db(self) -> None:
         conn = self.conn
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chengyu_config (
-                guild_id INTEGER PRIMARY KEY,
-                channel_id INTEGER NOT NULL,
-                role_id INTEGER
+        with self._lock:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_config (
+                    guild_id INTEGER PRIMARY KEY,
+                    channel_id INTEGER NOT NULL,
+                    role_id INTEGER
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chengyu_scores (
-                guild_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                username TEXT NOT NULL,
-                valid_entries INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_scores (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    valid_entries INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chengyu_used_entries (
-                guild_id INTEGER NOT NULL,
-                channel_id INTEGER NOT NULL,
-                entry TEXT NOT NULL,
-                PRIMARY KEY (guild_id, channel_id, entry)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_used_entries (
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    entry TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, channel_id, entry)
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chengyu_alltime_scores (
-                guild_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                username TEXT NOT NULL,
-                valid_entries INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (guild_id, user_id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_alltime_scores (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    valid_entries INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
             )
-            """
-        )
-        conn.commit()
+            conn.commit()
 
     def _normalize_pinyin(self, syllable: str) -> str:
         syllable = syllable.lower().replace("u:", "v")
@@ -181,6 +187,7 @@ class ChengyuGame:
             (guild_id, channel_id, role_id),
         )
         conn.commit()
+        logger.info("Chengyu channel set for guild=%s to channel=%s role=%s", guild_id, channel_id, role_id)
 
     def get_channel(self, guild_id: int) -> Optional[int]:
         conn = self.conn
@@ -196,7 +203,7 @@ class ChengyuGame:
             "SELECT role_id FROM chengyu_config WHERE guild_id = ?",
             (guild_id,),
         ).fetchone()
-        return int(row[0]) if row else None
+        return int(row[0]) if (row and row[0] is not None) else None
 
     def get_channel_state(self, guild_id: int, channel_id: int) -> dict:
         return self.channel_states.setdefault((guild_id, channel_id), {"entry": None, "used_entries": set()})
@@ -211,6 +218,7 @@ class ChengyuGame:
             (guild_id, channel_id, entry_text),
         )
         conn.commit()
+        logger.info("Marked chengyu entry '%s' as used (guild=%s channel=%s)", entry_text, guild_id, channel_id)
 
     def is_used_entry(self, guild_id: int, channel_id: int, entry_text: str) -> bool:
         conn = self.conn
@@ -235,21 +243,22 @@ class ChengyuGame:
 
     def reset_monthly_state(self, guild_id: int) -> list[dict]:
         conn = self.conn
-        rows = conn.execute(
-            """
-            SELECT user_id, username, valid_entries
-            FROM chengyu_scores
-            WHERE guild_id = ?
-            ORDER BY valid_entries DESC, user_id ASC
-            LIMIT 3
-            """,
-            (guild_id,),
-        ).fetchall()
-        conn.execute("DELETE FROM chengyu_scores WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM chengyu_used_entries WHERE guild_id = ?", (guild_id,))
-        conn.commit()
+        with self._lock:
+            rows = conn.execute(
+                """
+                SELECT user_id, username, valid_entries
+                FROM chengyu_scores
+                WHERE guild_id = ?
+                ORDER BY valid_entries DESC, user_id ASC
+                LIMIT 3
+                """,
+                (guild_id,),
+            ).fetchall()
+            conn.execute("DELETE FROM chengyu_scores WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM chengyu_used_entries WHERE guild_id = ?", (guild_id,))
+            conn.commit()
 
-        return [
+        winners = [
             {
                 "user_id": user_id,
                 "username": username,
@@ -257,6 +266,8 @@ class ChengyuGame:
             }
             for user_id, username, valid_entries in rows
         ]
+        logger.info("Reset monthly chengyu state for guild=%s, winners=%s", guild_id, winners)
+        return winners
 
     def get_next_reset_time(self) -> datetime:
         now = datetime.now()
@@ -282,39 +293,41 @@ class ChengyuGame:
     def record_score(self, guild_id: int, user_id: int, username: str, points: int = 1) -> None:
         self._reset_if_needed(guild_id)
         conn = self.conn
-        conn.execute(
-            """
-            INSERT INTO chengyu_scores (guild_id, user_id, username, valid_entries)
-            VALUES (?, ?, ?, 0)
-            ON CONFLICT(guild_id, user_id) DO NOTHING
-            """,
-            (guild_id, user_id, username),
-        )
-        conn.execute(
-            """
-            UPDATE chengyu_scores
-            SET username = ?, valid_entries = valid_entries + ?
-            WHERE guild_id = ? AND user_id = ?
-            """,
-            (username, points, guild_id, user_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO chengyu_alltime_scores (guild_id, user_id, username, valid_entries)
-            VALUES (?, ?, ?, 0)
-            ON CONFLICT(guild_id, user_id) DO NOTHING
-            """,
-            (guild_id, user_id, username),
-        )
-        conn.execute(
-            """
-            UPDATE chengyu_alltime_scores
-            SET username = ?, valid_entries = valid_entries + ?
-            WHERE guild_id = ? AND user_id = ?
-            """,
-            (username, points, guild_id, user_id),
-        )
-        conn.commit()
+        with self._lock:
+            conn.execute(
+                """
+                INSERT INTO chengyu_scores (guild_id, user_id, username, valid_entries)
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(guild_id, user_id) DO NOTHING
+                """,
+                (guild_id, user_id, username),
+            )
+            conn.execute(
+                """
+                UPDATE chengyu_scores
+                SET username = ?, valid_entries = valid_entries + ?
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (username, points, guild_id, user_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO chengyu_alltime_scores (guild_id, user_id, username, valid_entries)
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(guild_id, user_id) DO NOTHING
+                """,
+                (guild_id, user_id, username),
+            )
+            conn.execute(
+                """
+                UPDATE chengyu_alltime_scores
+                SET username = ?, valid_entries = valid_entries + ?
+                WHERE guild_id = ? AND user_id = ?
+                """,
+                (username, points, guild_id, user_id),
+            )
+            conn.commit()
+        logger.info("Recorded %d point(s) for %s (user_id=%s guild=%s)", points, username, user_id, guild_id)
 
     def get_leaderboard(self, guild_id: int) -> list[dict]:
         self._reset_if_needed(guild_id)
