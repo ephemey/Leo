@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHENGYU_DB_PATH = os.getenv("CHENGYU_DB_PATH", "chengyu.db")
+DATABASE_PATH = os.getenv("DATABASE_PATH")
+CHENGYU_DB_PATH = os.path.join(DATABASE_PATH, "chengyu.db") if DATABASE_PATH else "chengyu.db"
 XINHUA_DATA_DIR = os.getenv("XINHUA_DATA_DIR", "data")
 
 try:
@@ -79,6 +80,10 @@ bot.tree.interaction_check = global_interaction_check
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.CheckFailure):
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        logger.info("Permission denied for %s on command '%s'", interaction.user, interaction.command.name if interaction.command else "unknown")
+        return
     if isinstance(error, discord.app_commands.CommandInvokeError) and isinstance(error.original, discord.NotFound) and error.original.code == 10062:
         logger.debug("Interaction expired before response could be sent (command='%s')", interaction.command.name if interaction.command else "unknown")
         return
