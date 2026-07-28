@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 class ChengyuGame:
     def __init__(self, dictionary=None, db_path: Optional[str] = None):
         self.dictionary = dictionary
-        self.db_path = db_path or os.getenv("CHENGYU_DB_PATH", "chengyu.db")
+        database_path = os.getenv("DATABASE_PATH")
+        default_db_path = os.path.join(database_path, "chengyu.db") if database_path else "chengyu.db"
+        self.db_path = db_path or default_db_path
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._lock = threading.Lock()
         self.channel_states = {}
@@ -289,6 +291,37 @@ class ChengyuGame:
             "🔄 The Chengyu monthly reset is happening now. Congratulations to the new top scorers: "
             f"{winner_lines}."
         )
+
+    def edit_score(self, guild_id: int, user_id: int, username: str, action: str, amount: int) -> int:
+        conn = self.conn
+        with self._lock:
+            conn.execute(
+                "INSERT INTO chengyu_scores (guild_id, user_id, username, valid_entries) VALUES (?, ?, ?, 0) ON CONFLICT(guild_id, user_id) DO NOTHING",
+                (guild_id, user_id, username),
+            )
+            if action == "set":
+                conn.execute(
+                    "UPDATE chengyu_scores SET username = ?, valid_entries = MAX(0, ?) WHERE guild_id = ? AND user_id = ?",
+                    (username, amount, guild_id, user_id),
+                )
+            elif action == "add":
+                conn.execute(
+                    "UPDATE chengyu_scores SET username = ?, valid_entries = valid_entries + ? WHERE guild_id = ? AND user_id = ?",
+                    (username, amount, guild_id, user_id),
+                )
+            elif action == "deduct":
+                conn.execute(
+                    "UPDATE chengyu_scores SET username = ?, valid_entries = MAX(0, valid_entries - ?) WHERE guild_id = ? AND user_id = ?",
+                    (username, amount, guild_id, user_id),
+                )
+            conn.commit()
+            row = conn.execute(
+                "SELECT valid_entries FROM chengyu_scores WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id),
+            ).fetchone()
+        new_score = row[0] if row else 0
+        logger.info("Score edit for %s (guild=%s): action=%s amount=%d new_score=%d", username, guild_id, action, amount, new_score)
+        return new_score
 
     def record_score(self, guild_id: int, user_id: int, username: str, points: int = 1) -> None:
         self._reset_if_needed(guild_id)
