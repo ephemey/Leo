@@ -4,6 +4,8 @@ TODO
 
 front end editing chengyu dictionary
 
+need to be able to export / display current chengyu scores as there is no way to view Railway's volume
+
 Critical / High Impact
 
 

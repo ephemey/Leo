@@ -241,15 +241,20 @@ def setup(bot, chengyu_game, dictionary) -> None:
         user="The user whose score to edit (@mention or user ID)",
         action="Whether to add, deduct, or set the score",
         amount="The number of points",
+        board="Which leaderboard to edit",
     )
     @app_commands.choices(action=[
         app_commands.Choice(name="Add", value="add"),
         app_commands.Choice(name="Deduct", value="deduct"),
         app_commands.Choice(name="Set", value="set"),
     ])
+    @app_commands.choices(board=[
+        app_commands.Choice(name="Monthly leaderboard", value="monthly"),
+        app_commands.Choice(name="All-time leaderboard", value="alltime"),
+    ])
     @app_commands.check(_is_owner)
-    async def cyedit(interaction: discord.Interaction, user: str, action: str, amount: int):
-        logger.info("/cyedit called by %s (guild=%s): action=%s amount=%d target_input='%s'", interaction.user, interaction.guild_id, action, amount, user)
+    async def cyedit(interaction: discord.Interaction, user: str, action: str, amount: int, board: str):
+        logger.info("/cyedit called by %s (guild=%s): board=%s action=%s amount=%d target_input='%s'", interaction.user, interaction.guild_id, board, action, amount, user)
 
         match = re.fullmatch(r"<@!?(\d+)>", user.strip())
         user_id_str = match.group(1) if match else user.strip()
@@ -285,11 +290,12 @@ def setup(bot, chengyu_game, dictionary) -> None:
             mention = fetched_user.mention
             logger.info("/cyedit: target user id=%d is not a member of this guild, resolved via fetch_user", user_id)
 
-        new_score = chengyu_game.edit_score(interaction.guild_id or 0, user_id, username, action, amount)
-        logger.info("/cyedit: %s (id=%d) score is now %d after action=%s amount=%d (guild=%s, requested by %s)", username, user_id, new_score, action, amount, interaction.guild_id, interaction.user)
+        new_score = chengyu_game.edit_score(interaction.guild_id or 0, user_id, username, action, amount, board)
+        logger.info("/cyedit: %s (id=%d) score is now %d after action=%s amount=%d (guild=%s, board=%s, requested by %s)", username, user_id, new_score, action, amount, interaction.guild_id, board, interaction.user)
 
         action_past = {"add": "Added", "deduct": "Deducted", "set": "Set"}[action]
+        board_name = "all-time" if board == "alltime" else "monthly"
         await interaction.response.send_message(
-            f"✅ {action_past} {amount} point(s) for {mention}. Their score is now {new_score}.",
+            f"✅ {action_past} {amount} point(s) for {mention} on the {board_name} leaderboard. Their score is now {new_score}.",
             ephemeral=True,
         )
