@@ -65,6 +65,7 @@ def _load_dictionaries():
         dictionary.by_traditional[simplified] = converted
         dictionary.by_pinyin[converted["pinyin_raw"].lower().replace(" ", "")] = converted
         dictionary.by_pinyin[converted["pinyin"].lower().replace(" ", "")] = converted
+    chengyu_game.rebuild_index()
 
 
 

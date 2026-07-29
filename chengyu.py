@@ -19,6 +19,8 @@ class ChengyuGame:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._lock = threading.Lock()
         self.channel_states = {}
+        self._valid_entries: list[dict] = []
+        self._entries_by_first_syllable: dict[str, list[dict]] = {}
         self._init_db()
 
     def _init_db(self) -> None:
@@ -126,20 +128,63 @@ class ChengyuGame:
         parts = self._split_pinyin(raw)
         return parts[-1] if parts else None
 
+    def rebuild_index(self) -> None:
+        """Precompute the valid-chengyu set and a first-syllable index.
+
+        Call this once after the dictionary has finished loading (and after any
+        merging of extra sources, e.g. Xinhua idioms, into it). Without this the
+        game falls back to scanning ``self.dictionary.by_simplified`` directly.
+        """
+        if not self.dictionary:
+            self._valid_entries = []
+            self._entries_by_first_syllable = {}
+            return
+
+        valid_entries = []
+        by_first_syllable: dict[str, list[dict]] = {}
+        for entry in self.dictionary.by_simplified.values():
+            if not self.is_valid_chengyu(entry):
+                continue
+            valid_entries.append(entry)
+            first_syllable = self.get_first_syllable(entry)
+            if first_syllable:
+                by_first_syllable.setdefault(first_syllable, []).append(entry)
+
+        self._valid_entries = valid_entries
+        self._entries_by_first_syllable = by_first_syllable
+        logger.info("Chengyu index rebuilt: %d valid entries, %d distinct first syllables", len(valid_entries), len(by_first_syllable))
+
+    def _get_valid_entries(self) -> list[dict]:
+        if not self._valid_entries and self.dictionary:
+            self.rebuild_index()
+        return self._valid_entries
+
+    def _get_entries_by_first_syllable(self, syllable: str) -> list[dict]:
+        if not self._entries_by_first_syllable and self.dictionary:
+            self.rebuild_index()
+        return self._entries_by_first_syllable.get(syllable, [])
+
+    def get_used_entries(self, guild_id: int, channel_id: int) -> set[str]:
+        conn = self.conn
+        rows = conn.execute(
+            "SELECT entry FROM chengyu_used_entries WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        ).fetchall()
+        return {row[0] for row in rows}
+
     def is_dead_end(self, guild_id: int, channel_id: int, current_entry: dict) -> bool:
         last_syllable = self.get_last_syllable(current_entry)
         if not last_syllable or not self.dictionary:
             return False
 
-        for entry in self.dictionary.by_simplified.values():
-            if not self.is_valid_chengyu(entry):
-                continue
-            first_syllable = self.get_first_syllable(entry)
-            if first_syllable != last_syllable:
-                continue
+        candidates = self._get_entries_by_first_syllable(last_syllable)
+        if not candidates:
+            return True
 
+        used_entries = self.get_used_entries(guild_id, channel_id)
+        for entry in candidates:
             entry_text = entry.get("simplified") or entry.get("traditional")
-            if not self.is_used_entry(guild_id, channel_id, entry_text):
+            if entry_text not in used_entries:
                 return False
 
         return True
@@ -148,14 +193,15 @@ class ChengyuGame:
         if not self.dictionary:
             return None
 
-        unused = []
-        for entry in self.dictionary.by_simplified.values():
-            if not self.is_valid_chengyu(entry):
-                continue
+        valid_entries = self._get_valid_entries()
+        if not valid_entries:
+            return None
 
-            entry_text = entry.get("simplified") or entry.get("traditional")
-            if not self.is_used_entry(guild_id, channel_id, entry_text):
-                unused.append(entry)
+        used_entries = self.get_used_entries(guild_id, channel_id)
+        unused = [
+            entry for entry in valid_entries
+            if (entry.get("simplified") or entry.get("traditional")) not in used_entries
+        ]
 
         if not unused:
             return None

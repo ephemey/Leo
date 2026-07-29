@@ -9,13 +9,10 @@ need to be able to export / display current chengyu scores as there is no way to
 Critical / High Impact
 
 
-return int(row[0]) if (row and row[0] is not None) else None
 4. Xinhua idiom check too broad (chengyu.py:177-179)
 The secondary _is_idiom_entry check matches any xinhua word entry with word, pinyin, explanation — not just idioms. Regular vocabulary could enter the chengyu chain. Add a type tag at indexing time to distinguish idiom entries.
 
 Medium Impact
-5. is_dead_end and get_random_unused_idiom are O(N) (chengyu.py:129-158)
-Both scan the entire dictionary on every valid submission. Build a last_syllable → [entries] index once at load time.
 
 6. Monthly reset only fires lazily (chengyu_commands.py)
 _reset_if_needed only runs when someone interacts. If the bot is quiet around month-end, role assignment is silently delayed. Add a background discord.ext.tasks loop.
