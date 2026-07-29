@@ -67,6 +67,24 @@ class ChengyuGame:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_winners (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_reset_state (
+                    guild_id INTEGER PRIMARY KEY,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL
+                )
+                """
+            )
             conn.commit()
 
     def _normalize_pinyin(self, syllable: str) -> str:
@@ -294,18 +312,60 @@ class ChengyuGame:
         ).fetchone()
         return row is not None
 
-    def _reset_if_needed(self, guild_id: int) -> None:
-        now = datetime.now()
-        next_reset = self.get_next_reset_time()
-        if now >= next_reset:
-            self.reset_monthly_state(guild_id)
+    def get_current_winners(self, guild_id: int) -> list[int]:
+        conn = self.conn
+        rows = conn.execute(
+            "SELECT user_id FROM chengyu_winners WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def set_current_winners(self, guild_id: int, user_ids: list[int]) -> None:
+        conn = self.conn
+        with self._lock:
+            conn.execute("DELETE FROM chengyu_winners WHERE guild_id = ?", (guild_id,))
+            conn.executemany(
+                "INSERT INTO chengyu_winners (guild_id, user_id) VALUES (?, ?)",
+                [(guild_id, user_id) for user_id in user_ids],
+            )
+            conn.commit()
+        logger.info("Set current chengyu winners for guild=%s to %s", guild_id, user_ids)
+
+    def _get_reset_period(self, guild_id: int) -> Optional[tuple[int, int]]:
+        conn = self.conn
+        row = conn.execute(
+            "SELECT year, month FROM chengyu_reset_state WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def _set_reset_period(self, guild_id: int, year: int, month: int) -> None:
+        conn = self.conn
+        conn.execute(
+            "INSERT INTO chengyu_reset_state (guild_id, year, month) VALUES (?, ?, ?) "
+            "ON CONFLICT(guild_id) DO UPDATE SET year = excluded.year, month = excluded.month",
+            (guild_id, year, month),
+        )
+        conn.commit()
 
     def maybe_reset_monthly_state(self, guild_id: int) -> list[dict]:
         now = datetime.now()
-        next_reset = self.get_next_reset_time()
-        if now < next_reset:
+        current_period = (now.year, now.month)
+        stored_period = self._get_reset_period(guild_id)
+
+        if stored_period is None:
+            # First time tracking this guild's reset checkpoint: adopt the
+            # current month as the baseline rather than wiping scores that
+            # may have been accumulating before this checkpoint existed.
+            self._set_reset_period(guild_id, *current_period)
             return []
-        return self.reset_monthly_state(guild_id)
+
+        if current_period <= stored_period:
+            return []
+
+        winners = self.reset_monthly_state(guild_id)
+        self._set_reset_period(guild_id, *current_period)
+        return winners
 
     def reset_monthly_state(self, guild_id: int) -> list[dict]:
         conn = self.conn
@@ -389,7 +449,6 @@ class ChengyuGame:
         return new_score
 
     def record_score(self, guild_id: int, user_id: int, username: str, points: int = 1) -> None:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         with self._lock:
             conn.execute(
@@ -428,7 +487,6 @@ class ChengyuGame:
         logger.info("Recorded %d point(s) for %s (user_id=%s guild=%s)", points, username, user_id, guild_id)
 
     def get_leaderboard(self, guild_id: int) -> list[dict]:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         rows = conn.execute(
             """
@@ -450,7 +508,6 @@ class ChengyuGame:
         ]
 
     def get_score(self, guild_id: int, user_id: int) -> Optional[dict]:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         row = conn.execute(
             """

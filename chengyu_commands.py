@@ -7,31 +7,39 @@ from discord import app_commands
 logger = logging.getLogger(__name__)
 
 
-async def apply_monthly_winner_roles(guild: discord.Guild, chengyu_game) -> None:
-    """Strip the winner role from prior holders, grant it to this month's winners,
-    announce the reset, and post a new idiom to restart the chain."""
-    role_id = chengyu_game.get_role(guild.id)
-    if role_id is None:
-        return
+async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
+    """Check whether the monthly Chengyu reset is due for this guild and, if so,
+    grant the winner role to the top scorers (if configured), announce the
+    reset, and post a new idiom to restart the chain.
 
-    role = guild.get_role(role_id)
-    if role is None:
-        return
-
-    for member in guild.members:
-        if role in member.roles:
-            await member.remove_roles(role)
-
+    Safe to call repeatedly (e.g. from an hourly poll): resets only actually
+    occur once the current calendar month has rolled over, so repeated calls
+    within the same month are no-ops.
+    """
     winners = chengyu_game.maybe_reset_monthly_state(guild.id)
     if not winners:
         return
 
-    for entry in winners:
-        member = guild.get_member(entry["user_id"])
-        if member is not None:
-            await member.add_roles(role)
+    role_id = chengyu_game.get_role(guild.id)
+    role = guild.get_role(role_id) if role_id is not None else None
 
-    logger.info("Applied monthly chengyu winner role in guild='%s' to %d winner(s)", guild.name, len(winners))
+    if role is not None:
+        previous_winner_ids = chengyu_game.get_current_winners(guild.id)
+        for user_id in previous_winner_ids:
+            member = guild.get_member(user_id)
+            if member is not None and role in member.roles:
+                await member.remove_roles(role)
+
+        new_winner_ids = []
+        for entry in winners:
+            member = guild.get_member(entry["user_id"])
+            if member is not None:
+                await member.add_roles(role)
+                new_winner_ids.append(entry["user_id"])
+
+        chengyu_game.set_current_winners(guild.id, new_winner_ids)
+
+        logger.info("Applied monthly chengyu winner role in guild='%s' to %d winner(s)", guild.name, len(winners))
 
     configured_channel_id = chengyu_game.get_channel(guild.id)
     if configured_channel_id is None:
@@ -50,6 +58,21 @@ async def apply_monthly_winner_roles(guild: discord.Guild, chengyu_game) -> None
 
 async def _is_owner(interaction: discord.Interaction) -> bool:
     return await interaction.client.is_owner(interaction.user)
+
+
+async def _safe_send(coro, description: str) -> None:
+    """Await a Discord send/reply/reaction coroutine, swallowing permission errors.
+
+    Missing permissions are a per-guild configuration problem, not a bug — without
+    this, a channel missing e.g. Send Messages or Add Reactions would throw the same
+    unhandled Forbidden error on every single message in that channel.
+    """
+    try:
+        await coro
+    except discord.Forbidden:
+        logger.warning("Missing permissions to %s.", description)
+    except discord.HTTPException as e:
+        logger.warning("Failed to %s: %s", description, e)
 
 
 def setup(bot, chengyu_game, dictionary) -> None:
@@ -86,20 +109,29 @@ def setup(bot, chengyu_game, dictionary) -> None:
 
         entry_text = entry.get("simplified") or entry.get("traditional") or cleaned_text
         if chengyu_game.is_used_entry(message.guild.id, message.channel.id, entry_text):
-            await message.reply("❌ That chengyu has already been used in this chain.")
+            await _safe_send(
+                message.reply("❌ That chengyu has already been used in this chain."),
+                f"reply in #{message.channel.name} (guild='{message.guild.name}')",
+            )
             return
 
         state = chengyu_game.get_channel_state(message.guild.id, message.channel.id)
         previous_entry = state.get("entry")
 
         if previous_entry is not None and not chengyu_game.entries_match_chain(previous_entry, entry):
-            await message.reply("❌ That entry does not continue the chain.")
+            await _safe_send(
+                message.reply("❌ That entry does not continue the chain."),
+                f"reply in #{message.channel.name} (guild='{message.guild.name}')",
+            )
             return
 
         chengyu_game.record_score(message.guild.id, message.author.id, message.author.display_name or message.author.name)
         chengyu_game.mark_used_entry(message.guild.id, message.channel.id, entry_text)
         chengyu_game.set_channel_state(message.guild.id, message.channel.id, entry)
-        await message.add_reaction("✅")
+        await _safe_send(
+            message.add_reaction("✅"),
+            f"add reaction in #{message.channel.name} (guild='{message.guild.name}')",
+        )
         logger.info(
             "Accepted chengyu entry '%s' from %s in guild='%s' channel=%s",
             entry_text, message.author, message.guild.name, message.channel.id,
@@ -108,8 +140,11 @@ def setup(bot, chengyu_game, dictionary) -> None:
         if chengyu_game.is_dead_end(message.guild.id, message.channel.id, entry):
             continuation_entry = chengyu_game.get_random_unused_idiom(message.guild.id, message.channel.id)
             if continuation_entry is None:
-                await message.channel.send(
-                    f"💥 {message.author.display_name or message.author.name} has killed the game by reaching a dead end, and there are no unused idioms left. The game is over :("
+                await _safe_send(
+                    message.channel.send(
+                        f"💥 {message.author.display_name or message.author.name} has killed the game by reaching a dead end, and there are no unused idioms left. The game is over :("
+                    ),
+                    f"send in #{message.channel.name} (guild='{message.guild.name}')",
                 )
                 logger.info("Chengyu game over in guild='%s' channel=%s: no unused idioms left", message.guild.name, message.channel.id)
                 return
@@ -117,7 +152,10 @@ def setup(bot, chengyu_game, dictionary) -> None:
             continuation_entry_text = continuation_entry.get("simplified") or continuation_entry.get("traditional") or "an idiom"
             chengyu_game.mark_used_entry(message.guild.id, message.channel.id, continuation_entry_text)
             chengyu_game.set_channel_state(message.guild.id, message.channel.id, continuation_entry)
-            await message.channel.send(chengyu_game.format_dead_end_message(message.author.display_name or message.author.name, continuation_entry))
+            await _safe_send(
+                message.channel.send(chengyu_game.format_dead_end_message(message.author.display_name or message.author.name, continuation_entry)),
+                f"send in #{message.channel.name} (guild='{message.guild.name}')",
+            )
             logger.info("Chengyu dead end reached in guild='%s' channel=%s, continued with '%s'", message.guild.name, message.channel.id, continuation_entry_text)
 
     @bot.tree.command(name="cysetup", description="Set the text channel and optional winner role for Chengyu Jielong")

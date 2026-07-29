@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime
 
 import chengyu
 
@@ -169,6 +170,36 @@ class ChengyuGameTests(unittest.TestCase):
             self.assertEqual(leaderboard[0]["valid_entries"], 1)
         finally:
             os.unlink(db_path)
+
+    def test_no_reset_within_the_same_month(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        game.record_score(1, 100, "Alice")
+
+        # First call just adopts the current month as the baseline checkpoint.
+        self.assertEqual(game.maybe_reset_monthly_state(1), [])
+        # A second call in the same month must not wipe scores.
+        self.assertEqual(game.maybe_reset_monthly_state(1), [])
+        self.assertEqual(game.get_score(1, 100)["valid_entries"], 1)
+
+    def test_reset_fires_once_the_stored_period_is_in_the_past(self):
+        game = chengyu.ChengyuGame(db_path=':memory:')
+        game.record_score(1, 100, "Alice")
+        game.record_score(1, 100, "Alice")
+        game.record_score(1, 101, "Bob")
+
+        # Simulate a checkpoint from a previous month.
+        game._set_reset_period(1, 2000, 1)
+
+        winners = game.maybe_reset_monthly_state(1)
+
+        self.assertEqual(winners[0]["user_id"], 100)
+        self.assertEqual(game.get_leaderboard(1), [])
+
+        now = datetime.now()
+        self.assertEqual(game._get_reset_period(1), (now.year, now.month))
+
+        # Calling again immediately afterward must not reset a second time.
+        self.assertEqual(game.maybe_reset_monthly_state(1), [])
 
 
 if __name__ == "__main__":

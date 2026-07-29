@@ -157,7 +157,7 @@ def setup(bot):
         if queue:
             next_up = queue[0]
             logger.info("/knext: advanced past %s, next is %s (queue size=%d)", current["id"], next_up["id"], len(queue))
-            await interaction.response.send_message(f"➡️ {current['name']} is done. Next up: <@{next_up['id']}>{_song_label(next_up)}.")
+            await interaction.response.send_message(f"➡️ Thanks {current['name']}! Next up: <@{next_up['id']}>{_song_label(next_up)}.")
         else:
             logger.info("/knext: advanced past %s, queue now empty", current["id"])
             await interaction.response.send_message(f"➡️ {current['name']} is done. The queue is now empty.")

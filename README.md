@@ -1,13 +1,23 @@
 # Leo
 
+A Discord bot for the Chinese-English Language Exchange (CELX) server https://discord.gg/c-e
+
+
 TODO
 
 front end editing chengyu dictionary
 
 need to be able to export / display current chengyu scores as there is no way to view Railway's volume
 
-Critical / High Impact
+karaoke points awarded for participation when more than n people in channel undeafened
+- There is no /khelp command in this file itself
+- The "participating user" is identified purely by interaction.user.id — the Discord user who ran the slash command. There is no linkage to voice state at all; a user could run /kadd without being in any voice channel.
 
+
+
+Issues: 
+
+Critical / High Impact
 
 4. Xinhua idiom check too broad (chengyu.py:177-179)
 The secondary _is_idiom_entry check matches any xinhua word entry with word, pinyin, explanation — not just idioms. Regular vocabulary could enter the chengyu chain. Add a type tag at indexing time to distinguish idiom entries.
@@ -35,5 +45,3 @@ Low / Style
 13. Connection leak in startup_checks (startup_checks.py:41-45) — use with contextlib.closing(sqlite3.connect(...)).
 
 14. CJK regex too narrow (chengyu_commands.py:64) — [^一-鿿] misses CJK Extension A/B characters.
-
-The three most impactful fixes to make first: blocking I/O (#1), SQLite concurrency (#2), and the NULL role crash (#3). Want me to tackle any of these?
