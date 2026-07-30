@@ -65,6 +65,7 @@ def _load_dictionaries():
         dictionary.by_traditional[simplified] = converted
         dictionary.by_pinyin[converted["pinyin_raw"].lower().replace(" ", "")] = converted
         dictionary.by_pinyin[converted["pinyin"].lower().replace(" ", "")] = converted
+    chengyu_game.rebuild_index()
 
 
 
@@ -90,6 +91,15 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
     logger.error("Unhandled app command error (command='%s'): %s", interaction.command.name if interaction.command else "unknown", error, exc_info=error)
 
 
+@tasks.loop(hours=1)
+async def monthly_reset_check():
+    for guild in bot.guilds:
+        try:
+            await chengyu_commands.apply_monthly_reset(guild, chengyu_game)
+        except Exception:
+            logger.exception("Failed to apply monthly Chengyu reset for guild='%s'", guild.name)
+
+
 @bot.event
 async def on_ready():
     queue_count = len(karaoke_queues)
@@ -106,6 +116,9 @@ async def on_ready():
         logger.error("Error syncing commands: %s", e)
 
     startup_checks.check_discord_permissions(bot, chengyu_game)
+
+    if not monthly_reset_check.is_running():
+        monthly_reset_check.start()
 
 
 try:

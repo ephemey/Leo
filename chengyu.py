@@ -19,6 +19,8 @@ class ChengyuGame:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._lock = threading.Lock()
         self.channel_states = {}
+        self._valid_entries: list[dict] = []
+        self._entries_by_first_syllable: dict[str, list[dict]] = {}
         self._init_db()
 
     def _init_db(self) -> None:
@@ -62,6 +64,24 @@ class ChengyuGame:
                     username TEXT NOT NULL,
                     valid_entries INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_winners (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_reset_state (
+                    guild_id INTEGER PRIMARY KEY,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL
                 )
                 """
             )
@@ -126,20 +146,63 @@ class ChengyuGame:
         parts = self._split_pinyin(raw)
         return parts[-1] if parts else None
 
+    def rebuild_index(self) -> None:
+        """Precompute the valid-chengyu set and a first-syllable index.
+
+        Call this once after the dictionary has finished loading (and after any
+        merging of extra sources, e.g. Xinhua idioms, into it). Without this the
+        game falls back to scanning ``self.dictionary.by_simplified`` directly.
+        """
+        if not self.dictionary:
+            self._valid_entries = []
+            self._entries_by_first_syllable = {}
+            return
+
+        valid_entries = []
+        by_first_syllable: dict[str, list[dict]] = {}
+        for entry in self.dictionary.by_simplified.values():
+            if not self.is_valid_chengyu(entry):
+                continue
+            valid_entries.append(entry)
+            first_syllable = self.get_first_syllable(entry)
+            if first_syllable:
+                by_first_syllable.setdefault(first_syllable, []).append(entry)
+
+        self._valid_entries = valid_entries
+        self._entries_by_first_syllable = by_first_syllable
+        logger.info("Chengyu index rebuilt: %d valid entries, %d distinct first syllables", len(valid_entries), len(by_first_syllable))
+
+    def _get_valid_entries(self) -> list[dict]:
+        if not self._valid_entries and self.dictionary:
+            self.rebuild_index()
+        return self._valid_entries
+
+    def _get_entries_by_first_syllable(self, syllable: str) -> list[dict]:
+        if not self._entries_by_first_syllable and self.dictionary:
+            self.rebuild_index()
+        return self._entries_by_first_syllable.get(syllable, [])
+
+    def get_used_entries(self, guild_id: int, channel_id: int) -> set[str]:
+        conn = self.conn
+        rows = conn.execute(
+            "SELECT entry FROM chengyu_used_entries WHERE guild_id = ? AND channel_id = ?",
+            (guild_id, channel_id),
+        ).fetchall()
+        return {row[0] for row in rows}
+
     def is_dead_end(self, guild_id: int, channel_id: int, current_entry: dict) -> bool:
         last_syllable = self.get_last_syllable(current_entry)
         if not last_syllable or not self.dictionary:
             return False
 
-        for entry in self.dictionary.by_simplified.values():
-            if not self.is_valid_chengyu(entry):
-                continue
-            first_syllable = self.get_first_syllable(entry)
-            if first_syllable != last_syllable:
-                continue
+        candidates = self._get_entries_by_first_syllable(last_syllable)
+        if not candidates:
+            return True
 
+        used_entries = self.get_used_entries(guild_id, channel_id)
+        for entry in candidates:
             entry_text = entry.get("simplified") or entry.get("traditional")
-            if not self.is_used_entry(guild_id, channel_id, entry_text):
+            if entry_text not in used_entries:
                 return False
 
         return True
@@ -148,14 +211,15 @@ class ChengyuGame:
         if not self.dictionary:
             return None
 
-        unused = []
-        for entry in self.dictionary.by_simplified.values():
-            if not self.is_valid_chengyu(entry):
-                continue
+        valid_entries = self._get_valid_entries()
+        if not valid_entries:
+            return None
 
-            entry_text = entry.get("simplified") or entry.get("traditional")
-            if not self.is_used_entry(guild_id, channel_id, entry_text):
-                unused.append(entry)
+        used_entries = self.get_used_entries(guild_id, channel_id)
+        unused = [
+            entry for entry in valid_entries
+            if (entry.get("simplified") or entry.get("traditional")) not in used_entries
+        ]
 
         if not unused:
             return None
@@ -230,18 +294,60 @@ class ChengyuGame:
         ).fetchone()
         return row is not None
 
-    def _reset_if_needed(self, guild_id: int) -> None:
-        now = datetime.now()
-        next_reset = self.get_next_reset_time()
-        if now >= next_reset:
-            self.reset_monthly_state(guild_id)
+    def get_current_winners(self, guild_id: int) -> list[int]:
+        conn = self.conn
+        rows = conn.execute(
+            "SELECT user_id FROM chengyu_winners WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def set_current_winners(self, guild_id: int, user_ids: list[int]) -> None:
+        conn = self.conn
+        with self._lock:
+            conn.execute("DELETE FROM chengyu_winners WHERE guild_id = ?", (guild_id,))
+            conn.executemany(
+                "INSERT INTO chengyu_winners (guild_id, user_id) VALUES (?, ?)",
+                [(guild_id, user_id) for user_id in user_ids],
+            )
+            conn.commit()
+        logger.info("Set current chengyu winners for guild=%s to %s", guild_id, user_ids)
+
+    def _get_reset_period(self, guild_id: int) -> Optional[tuple[int, int]]:
+        conn = self.conn
+        row = conn.execute(
+            "SELECT year, month FROM chengyu_reset_state WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def _set_reset_period(self, guild_id: int, year: int, month: int) -> None:
+        conn = self.conn
+        conn.execute(
+            "INSERT INTO chengyu_reset_state (guild_id, year, month) VALUES (?, ?, ?) "
+            "ON CONFLICT(guild_id) DO UPDATE SET year = excluded.year, month = excluded.month",
+            (guild_id, year, month),
+        )
+        conn.commit()
 
     def maybe_reset_monthly_state(self, guild_id: int) -> list[dict]:
         now = datetime.now()
-        next_reset = self.get_next_reset_time()
-        if now < next_reset:
+        current_period = (now.year, now.month)
+        stored_period = self._get_reset_period(guild_id)
+
+        if stored_period is None:
+            # First time tracking this guild's reset checkpoint: adopt the
+            # current month as the baseline rather than wiping scores that
+            # may have been accumulating before this checkpoint existed.
+            self._set_reset_period(guild_id, *current_period)
             return []
-        return self.reset_monthly_state(guild_id)
+
+        if current_period <= stored_period:
+            return []
+
+        winners = self.reset_monthly_state(guild_id)
+        self._set_reset_period(guild_id, *current_period)
+        return winners
 
     def reset_monthly_state(self, guild_id: int) -> list[dict]:
         conn = self.conn
@@ -325,7 +431,6 @@ class ChengyuGame:
         return new_score
 
     def record_score(self, guild_id: int, user_id: int, username: str, points: int = 1) -> None:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         with self._lock:
             conn.execute(
@@ -364,7 +469,6 @@ class ChengyuGame:
         logger.info("Recorded %d point(s) for %s (user_id=%s guild=%s)", points, username, user_id, guild_id)
 
     def get_leaderboard(self, guild_id: int) -> list[dict]:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         rows = conn.execute(
             """
@@ -386,7 +490,6 @@ class ChengyuGame:
         ]
 
     def get_score(self, guild_id: int, user_id: int) -> Optional[dict]:
-        self._reset_if_needed(guild_id)
         conn = self.conn
         row = conn.execute(
             """
