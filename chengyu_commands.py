@@ -4,6 +4,8 @@ import re
 import discord
 from discord import app_commands
 
+from startup_checks import REQUIRED_CHANNEL_PERMISSIONS
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +62,7 @@ async def _is_owner(interaction: discord.Interaction) -> bool:
     return await interaction.client.is_owner(interaction.user)
 
 
-async def _safe_send(coro, description: str) -> None:
+async def _safe_send(coro, description: str, channel: discord.TextChannel) -> None:
     """Await a Discord send/reply/reaction coroutine, swallowing permission errors.
 
     Missing permissions are a per-guild configuration problem, not a bug — without
@@ -70,7 +72,15 @@ async def _safe_send(coro, description: str) -> None:
     try:
         await coro
     except discord.Forbidden:
-        logger.warning("Missing permissions to %s.", description)
+        me = channel.guild.me
+        missing = (
+            [perm for perm in REQUIRED_CHANNEL_PERMISSIONS if not getattr(channel.permissions_for(me), perm)]
+            if me is not None else []
+        )
+        if missing:
+            logger.warning("Missing permissions to %s: missing %s.", description, ", ".join(missing))
+        else:
+            logger.warning("Missing permissions to %s.", description)
     except discord.HTTPException as e:
         logger.warning("Failed to %s: %s", description, e)
 
@@ -112,6 +122,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             await _safe_send(
                 message.reply("❌ That chengyu has already been used in this chain."),
                 f"reply in #{message.channel.name} (guild='{message.guild.name}')",
+                message.channel,
             )
             return
 
@@ -122,6 +133,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             await _safe_send(
                 message.reply("❌ That entry does not continue the chain."),
                 f"reply in #{message.channel.name} (guild='{message.guild.name}')",
+                message.channel,
             )
             return
 
@@ -131,6 +143,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         await _safe_send(
             message.add_reaction("✅"),
             f"add reaction in #{message.channel.name} (guild='{message.guild.name}')",
+            message.channel,
         )
         logger.info(
             "Accepted chengyu entry '%s' from %s in guild='%s' channel=%s",
@@ -145,6 +158,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
                         f"💥 {message.author.display_name or message.author.name} has killed the game by reaching a dead end, and there are no unused idioms left. The game is over :("
                     ),
                     f"send in #{message.channel.name} (guild='{message.guild.name}')",
+                    message.channel,
                 )
                 logger.info("Chengyu game over in guild='%s' channel=%s: no unused idioms left", message.guild.name, message.channel.id)
                 return
@@ -155,6 +169,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             await _safe_send(
                 message.channel.send(chengyu_game.format_dead_end_message(message.author.display_name or message.author.name, continuation_entry)),
                 f"send in #{message.channel.name} (guild='{message.guild.name}')",
+                message.channel,
             )
             logger.info("Chengyu dead end reached in guild='%s' channel=%s, continued with '%s'", message.guild.name, message.channel.id, continuation_entry_text)
 
