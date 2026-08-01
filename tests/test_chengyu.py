@@ -176,9 +176,9 @@ class ChengyuGameTests(unittest.TestCase):
         game.record_score(1, 100, "Alice")
 
         # First call just adopts the current month as the baseline checkpoint.
-        self.assertEqual(game.maybe_reset_monthly_state(1), [])
+        self.assertIsNone(game.maybe_reset_monthly_state(1))
         # A second call in the same month must not wipe scores.
-        self.assertEqual(game.maybe_reset_monthly_state(1), [])
+        self.assertIsNone(game.maybe_reset_monthly_state(1))
         self.assertEqual(game.get_score(1, 100)["valid_entries"], 1)
 
     def test_reset_fires_once_the_stored_period_is_in_the_past(self):
@@ -199,7 +199,7 @@ class ChengyuGameTests(unittest.TestCase):
         self.assertEqual(game._get_reset_period(1), (now.year, now.month))
 
         # Calling again immediately afterward must not reset a second time.
-        self.assertEqual(game.maybe_reset_monthly_state(1), [])
+        self.assertIsNone(game.maybe_reset_monthly_state(1))
 
 
 if __name__ == "__main__":

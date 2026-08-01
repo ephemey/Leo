@@ -7,6 +7,8 @@ TODO
 
 front end editing chengyu dictionary
 
+adding poetry / longer idioms to chengyu dictionary
+
 need to be able to export / display current chengyu scores as there is no way to view Railway's volume
 
 karaoke points awarded for participation when more than n people in channel undeafened
@@ -23,9 +25,6 @@ Critical / High Impact
 The secondary _is_idiom_entry check matches any xinhua word entry with word, pinyin, explanation — not just idioms. Regular vocabulary could enter the chengyu chain. Add a type tag at indexing time to distinguish idiom entries.
 
 Medium Impact
-
-6. Monthly reset only fires lazily (chengyu_commands.py)
-_reset_if_needed only runs when someone interacts. If the bot is quiet around month-end, role assignment is silently delayed. Add a background discord.ext.tasks loop.
 
 7. Inconsistent search() return type (dictionary.py)
 Returns dict | list[dict] | None. Every caller needs isinstance checks. Should always return list[dict].
