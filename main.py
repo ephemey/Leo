@@ -11,6 +11,7 @@ import chengyu
 import chengyu_commands
 import dictionary_commands
 import general_commands
+import karaoke_points as karaoke_points_module
 import startup_checks
 from dictionary import ChineseDictionary, XinhuaDictionary
 from karaoke import karaoke_queues
@@ -24,6 +25,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_PATH = os.getenv("DATABASE_PATH")
 CHENGYU_DB_PATH = os.path.join(DATABASE_PATH, "chengyu.db") if DATABASE_PATH else "chengyu.db"
+KARAOKE_DB_PATH = os.path.join(DATABASE_PATH, "karaoke.db") if DATABASE_PATH else "karaoke.db"
 XINHUA_DATA_DIR = os.getenv("XINHUA_DATA_DIR", "data")
 
 try:
@@ -43,8 +45,9 @@ BOT_START_TIME = datetime.now(timezone.utc)
 dictionary = ChineseDictionary()
 xinhua_dictionary = XinhuaDictionary()
 chengyu_game = chengyu.ChengyuGame(dictionary=dictionary, db_path=CHENGYU_DB_PATH)
+karaoke_pts = karaoke_points_module.KaraokePoints(db_path=KARAOKE_DB_PATH)
 
-register_karaoke_commands(bot)
+register_karaoke_commands(bot, karaoke_pts)
 chengyu_commands.setup(bot, chengyu_game, dictionary)
 dictionary_commands.setup(bot, dictionary, xinhua_dictionary)
 dictionary_commands.setup_owner_commands(bot)
@@ -98,6 +101,12 @@ async def monthly_reset_check():
             await chengyu_commands.apply_monthly_reset(guild, chengyu_game)
         except Exception:
             logger.exception("Failed to apply monthly Chengyu reset for guild='%s'", guild.name)
+        try:
+            winners = karaoke_pts.maybe_reset_monthly(guild.id)
+            if winners is not None:
+                logger.info("Karaoke monthly reset for guild='%s', top scorers=%s", guild.name, winners)
+        except Exception:
+            logger.exception("Failed to apply monthly karaoke reset for guild='%s'", guild.name)
 
 
 @bot.event

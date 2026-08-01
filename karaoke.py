@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -66,13 +67,32 @@ def _queue_display(interaction: discord.Interaction) -> discord.Embed:
     return embed
 
 
-def setup(bot):
+def _leaderboard_embed(title: str, entries: list[dict]) -> discord.Embed:
+    embed = discord.Embed(title=title, color=discord.Color.gold())
+    if not entries:
+        embed.description = "No scores yet."
+        return embed
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, entry in enumerate(entries[:10]):
+        prefix = medals[i] if i < 3 else f"{i + 1}."
+        lines.append(f"{prefix} <@{entry['user_id']}> — {entry['points']} pts")
+    embed.description = "\n".join(lines)
+    return embed
+
+
+def setup(bot, karaoke_points=None):
     @bot.tree.command(name="kadd", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
         logger.info("/kadd called by %s (guild=%s)", interaction.user, interaction.guild_id)
-        queue = _get_queue(interaction)
 
+        if interaction.user.voice is None or interaction.user.voice.channel is None:
+            logger.info("/kadd: %s is not in a voice channel", interaction.user)
+            await interaction.response.send_message("❌ You must be in a voice channel to join the karaoke queue.", ephemeral=True)
+            return
+
+        queue = _get_queue(interaction)
         entry = {
             "id": interaction.user.id,
             "name": interaction.user.display_name or interaction.user.name,
@@ -154,15 +174,73 @@ def setup(bot):
             return
 
         current = queue.pop(0)
+
+        # Award points silently
+        if karaoke_points is not None and interaction.guild is not None:
+            singer = interaction.guild.get_member(current["id"])
+            if singer is None:
+                logger.info("/knext: singer %s not found in guild=%s, skipping points", current["id"], interaction.guild_id)
+            elif singer.voice is None or singer.voice.channel is None:
+                logger.info("/knext: singer %s is not in a voice channel (guild=%s), skipping points", current["id"], interaction.guild_id)
+            else:
+                vc = singer.voice.channel
+                audience_count = len(vc.members) - 1
+                pts = karaoke_points.calculate_points(audience_count)
+                if pts > 0:
+                    karaoke_points.record_points(interaction.guild_id, current["id"], current["name"], pts)
+                    logger.info("/knext: awarded %d point(s) to %s (audience=%d, guild=%s)", pts, current["id"], audience_count, interaction.guild_id)
+                else:
+                    logger.info("/knext: no points for %s — singing alone in VC (guild=%s)", current["id"], interaction.guild_id)
+        elif karaoke_points is not None:
+            logger.info("/knext: guild not available for interaction, skipping points for %s", current["id"])
+
         if queue:
             next_up = queue[0]
             logger.info("/knext: advanced past %s, next is %s (queue size=%d)", current["id"], next_up["id"], len(queue))
-            await interaction.response.send_message(f"➡️ Thanks {current['name']}! Next up: <@{next_up['id']}>{_song_label(next_up)}.")
+            await interaction.response.send_message(
+                f"➡️ Thanks {current['name']}! Next up: <@{next_up['id']}>{_song_label(next_up)}."
+            )
         else:
             logger.info("/knext: advanced past %s, queue now empty", current["id"])
-            await interaction.response.send_message(f"➡️ {current['name']} is done. The queue is now empty.")
+            await interaction.response.send_message(
+                f"➡️ {current['name']} is done. The queue is now empty."
+            )
 
     @bot.tree.command(name="kqueue", description="Show the current karaoke queue")
     async def karaoke_queue_view(interaction: discord.Interaction):
         logger.info("/kqueue called by %s (guild=%s, queue size=%d)", interaction.user, interaction.guild_id, len(_get_queue(interaction)))
         await interaction.response.send_message(embed=_queue_display(interaction))
+
+    @bot.tree.command(name="klb", description="Show the monthly karaoke leaderboard")
+    async def karaoke_leaderboard(interaction: discord.Interaction):
+        logger.info("/klb called by %s (guild=%s)", interaction.user, interaction.guild_id)
+        if karaoke_points is None:
+            await interaction.response.send_message("Karaoke points are not enabled.", ephemeral=True)
+            return
+        entries = karaoke_points.get_leaderboard(interaction.guild_id)
+        await interaction.response.send_message(embed=_leaderboard_embed("🎤 Karaoke — Monthly Leaderboard", entries))
+
+    @bot.tree.command(name="klb-alltime", description="Show the all-time karaoke leaderboard")
+    async def karaoke_leaderboard_alltime(interaction: discord.Interaction):
+        logger.info("/klb-alltime called by %s (guild=%s)", interaction.user, interaction.guild_id)
+        if karaoke_points is None:
+            await interaction.response.send_message("Karaoke points are not enabled.", ephemeral=True)
+            return
+        entries = karaoke_points.get_alltime_leaderboard(interaction.guild_id)
+        await interaction.response.send_message(embed=_leaderboard_embed("🎤 Karaoke — All-Time Leaderboard", entries))
+
+    @bot.tree.command(name="kscore", description="Check a user's karaoke points")
+    @app_commands.describe(user="The user to look up (defaults to yourself)")
+    async def karaoke_score(interaction: discord.Interaction, user: discord.Member | None = None):
+        target = user or interaction.user
+        logger.info("/kscore called by %s for %s (guild=%s)", interaction.user, target, interaction.guild_id)
+        if karaoke_points is None:
+            await interaction.response.send_message("Karaoke points are not enabled.", ephemeral=True)
+            return
+        monthly = karaoke_points.get_monthly_score(interaction.guild_id, target.id)
+        alltime = karaoke_points.get_alltime_score(interaction.guild_id, target.id)
+        logger.info("/kscore: %s has %d monthly pts, %d alltime pts (guild=%s)", target, monthly, alltime, interaction.guild_id)
+        await interaction.response.send_message(
+            f"🎤 {target.mention} — {monthly} pts this month, {alltime} pts all-time.",
+            ephemeral=True,
+        )
