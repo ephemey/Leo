@@ -330,7 +330,7 @@ class ChengyuGame:
         )
         conn.commit()
 
-    def maybe_reset_monthly_state(self, guild_id: int) -> list[dict]:
+    def maybe_reset_monthly_state(self, guild_id: int) -> Optional[list[dict]]:
         now = datetime.now()
         current_period = (now.year, now.month)
         stored_period = self._get_reset_period(guild_id)
@@ -340,10 +340,10 @@ class ChengyuGame:
             # current month as the baseline rather than wiping scores that
             # may have been accumulating before this checkpoint existed.
             self._set_reset_period(guild_id, *current_period)
-            return []
+            return None
 
         if current_period <= stored_period:
-            return []
+            return None
 
         winners = self.reset_monthly_state(guild_id)
         self._set_reset_period(guild_id, *current_period)
@@ -388,13 +388,13 @@ class ChengyuGame:
 
     def format_reset_message(self, winners: list[dict]) -> str:
         if not winners:
-            return "🔄 The Chengyu monthly reset is happening now."
+            return "🔄 The Chengyu monthly leaderboard has been reset!"
 
         winner_lines = ", ".join(
             f"{entry['username']} ({entry['valid_entries']} points)" for entry in winners
         )
         return (
-            "🔄 The Chengyu monthly reset is happening now. Congratulations to the new top scorers: "
+            "🔄 The Chengyu monthly leaderboard has been reset! Congratulations to the new top scorers: "
             f"{winner_lines}."
         )
 

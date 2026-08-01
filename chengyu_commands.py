@@ -19,12 +19,13 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
     within the same month are no-ops.
     """
     winners = chengyu_game.maybe_reset_monthly_state(guild.id)
-    if not winners:
+    if winners is None:
         return
 
     role_id = chengyu_game.get_role(guild.id)
     role = guild.get_role(role_id) if role_id is not None else None
 
+    new_winner_ids = []
     if role is not None:
         previous_winner_ids = chengyu_game.get_current_winners(guild.id)
         for user_id in previous_winner_ids:
@@ -32,16 +33,22 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
             if member is not None and role in member.roles:
                 await member.remove_roles(role)
 
-        new_winner_ids = []
         for entry in winners:
             member = guild.get_member(entry["user_id"])
             if member is not None:
                 await member.add_roles(role)
                 new_winner_ids.append(entry["user_id"])
 
-        chengyu_game.set_current_winners(guild.id, new_winner_ids)
+        logger.info("Applied monthly chengyu winner role in guild='%s' to %d winner(s)", guild.name, len(new_winner_ids))
+    else:
+        new_winner_ids = [entry["user_id"] for entry in winners]
+        if role_id is None:
+            logger.info("No winner role configured for guild='%s'; skipping role grants", guild.name)
+        else:
+            logger.warning("Winner role %s not found in guild='%s'; skipping role grants", role_id, guild.name)
 
-        logger.info("Applied monthly chengyu winner role in guild='%s' to %d winner(s)", guild.name, len(winners))
+    chengyu_game.set_current_winners(guild.id, new_winner_ids)
+    logger.info("Registered %d chengyu winner(s) in DB for guild='%s'", len(new_winner_ids), guild.name)
 
     configured_channel_id = chengyu_game.get_channel(guild.id)
     if configured_channel_id is None:
