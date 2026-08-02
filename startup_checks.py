@@ -66,8 +66,6 @@ def check_discord_permissions(bot: discord.Client, chengyu_game) -> None:
     guild membership are only known after login. Never raises: a
     misconfigured guild shouldn't take down the whole bot.
     """
-    if not bot.intents.members:
-        logger.warning("Server Members Intent is not enabled; role cleanup/assignment may miss members.")
     if not bot.intents.message_content:
         logger.warning("Message Content Intent is not enabled; Chengyu chain messages will not be readable.")
 

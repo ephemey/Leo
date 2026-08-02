@@ -35,11 +35,21 @@ def _make_channel(channel_id=42):
 
 
 def _make_guild(guild_id=1, role=None, members=None, channel=None):
+    import discord
+
     guild = MagicMock()
     guild.id = guild_id
     guild.name = "Test Guild"
     guild.get_role = MagicMock(return_value=role)
     guild.get_member = MagicMock(side_effect=lambda uid: (members or {}).get(uid))
+
+    async def _fetch_member(uid):
+        member = (members or {}).get(uid)
+        if member is None:
+            raise discord.NotFound(MagicMock(), "member not found")
+        return member
+
+    guild.fetch_member = AsyncMock(side_effect=_fetch_member)
     guild.get_channel = MagicMock(return_value=channel)
     return guild
 

@@ -179,6 +179,11 @@ def setup(bot, karaoke_points=None):
         if karaoke_points is not None and interaction.guild is not None:
             singer = interaction.guild.get_member(current["id"])
             if singer is None:
+                try:
+                    singer = await interaction.guild.fetch_member(current["id"])
+                except discord.NotFound:
+                    singer = None
+            if singer is None:
                 logger.info("/knext: singer %s not found in guild=%s, skipping points", current["id"], interaction.guild_id)
             elif singer.voice is None or singer.voice.channel is None:
                 logger.info("/knext: singer %s is not in a voice channel (guild=%s), skipping points", current["id"], interaction.guild_id)

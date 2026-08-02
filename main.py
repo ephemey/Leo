@@ -36,7 +36,6 @@ except RuntimeError as e:
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
@@ -134,8 +133,8 @@ try:
     bot.run(TOKEN)
 except discord.PrivilegedIntentsRequired as e:
     logger.error(
-        "Missing privileged intents: %s. Enable 'Server Members Intent' and "
-        "'Message Content Intent' for this bot in the Discord Developer Portal.",
+        "Missing privileged intents: %s. Enable 'Message Content Intent' for "
+        "this bot in the Discord Developer Portal.",
         e,
     )
     raise SystemExit(1) from e
