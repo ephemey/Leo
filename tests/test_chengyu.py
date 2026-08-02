@@ -64,7 +64,7 @@ class ChengyuGameTests(unittest.TestCase):
 
         message = game.format_reset_message(winners)
 
-        self.assertIn("reset is happening", message.lower())
+        self.assertIn("has been reset", message.lower())
         self.assertIn("Congratulations", message)
         self.assertIn("Alice", message)
         self.assertIn("Bob", message)

@@ -29,12 +29,12 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
     if role is not None:
         previous_winner_ids = chengyu_game.get_current_winners(guild.id)
         for user_id in previous_winner_ids:
-            member = guild.get_member(user_id)
+            member = await _fetch_member(guild, user_id)
             if member is not None and role in member.roles:
                 await member.remove_roles(role)
 
         for entry in winners:
-            member = guild.get_member(entry["user_id"])
+            member = await _fetch_member(guild, entry["user_id"])
             if member is not None:
                 await member.add_roles(role)
                 new_winner_ids.append(entry["user_id"])
@@ -63,6 +63,21 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
             chengyu_game.mark_used_entry(guild.id, channel.id, continuation_text)
             chengyu_game.set_channel_state(guild.id, channel.id, continuation)
             await channel.send(f"🔁 Starting a new chain with: {continuation_text}")
+
+
+async def _fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
+    """Look up a guild member without relying on the Members intent's cache.
+
+    Falls back to a direct API call since the member cache is empty (or
+    incomplete) without the privileged Members intent.
+    """
+    member = guild.get_member(user_id)
+    if member is not None:
+        return member
+    try:
+        return await guild.fetch_member(user_id)
+    except discord.NotFound:
+        return None
 
 
 async def _is_owner(interaction: discord.Interaction) -> bool:
@@ -331,7 +346,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             await interaction.response.send_message("Amount must be a positive number.", ephemeral=True)
             return
 
-        member = interaction.guild.get_member(user_id) if interaction.guild else None
+        member = await _fetch_member(interaction.guild, user_id) if interaction.guild else None
         if member is not None:
             username = member.display_name
             mention = member.mention
