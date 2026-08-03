@@ -11,7 +11,6 @@ adding poetry / longer idioms to chengyu dictionary
 
 need to be able to export / display current chengyu scores as there is no way to view Railway's volume
 
-karaoke points awarded for participation when more than n people in channel undeafened
 - There is no /khelp command in this file itself
 - The "participating user" is identified purely by interaction.user.id — the Discord user who ran the slash command. There is no linkage to voice state at all; a user could run /kadd without being in any voice channel.
 Gap: startup_checks.check_filesystem (called before the bot connects) only pre-validates the chengyu DB directory (main.py:32, startup_checks.py:18-25) — the karaoke DB path isn't checked at startup. If DATABASE_PATH is misconfigured or unwritable, chengyu fails fast with a clear error, but karaoke would only fail lazily inside KaraokePoints.__init__ a few lines later with a raw sqlite3.OperationalError. Not something you asked me to fix, but worth knowing — say the word if you want that startup check extended to cover karaoke.db too.
