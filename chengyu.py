@@ -416,38 +416,6 @@ class ChengyuGame:
             f"{winner_lines}."
         )
 
-    def edit_score(self, guild_id: int, user_id: int, username: str, action: str, amount: int, board: str = "monthly") -> int:
-        table = "chengyu_alltime_scores" if board == "alltime" else "chengyu_scores"
-        conn = self.conn
-        with self._lock:
-            conn.execute(
-                f"INSERT INTO {table} (guild_id, user_id, username, valid_entries) VALUES (?, ?, ?, 0) ON CONFLICT(guild_id, user_id) DO NOTHING",
-                (guild_id, user_id, username),
-            )
-            if action == "set":
-                conn.execute(
-                    f"UPDATE {table} SET username = ?, valid_entries = MAX(0, ?) WHERE guild_id = ? AND user_id = ?",
-                    (username, amount, guild_id, user_id),
-                )
-            elif action == "add":
-                conn.execute(
-                    f"UPDATE {table} SET username = ?, valid_entries = valid_entries + ? WHERE guild_id = ? AND user_id = ?",
-                    (username, amount, guild_id, user_id),
-                )
-            elif action == "deduct":
-                conn.execute(
-                    f"UPDATE {table} SET username = ?, valid_entries = MAX(0, valid_entries - ?) WHERE guild_id = ? AND user_id = ?",
-                    (username, amount, guild_id, user_id),
-                )
-            conn.commit()
-            row = conn.execute(
-                f"SELECT valid_entries FROM {table} WHERE guild_id = ? AND user_id = ?",
-                (guild_id, user_id),
-            ).fetchone()
-        new_score = row[0] if row else 0
-        logger.info("Score edit for %s (guild=%s, board=%s): action=%s amount=%d new_score=%d", username, guild_id, board, action, amount, new_score)
-        return new_score
-
     def record_score(self, guild_id: int, user_id: int, username: str, points: int = 1) -> None:
         conn = self.conn
         with self._lock:

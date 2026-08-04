@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from datetime import datetime
 
@@ -68,6 +70,34 @@ class RecordAndLeaderboardTests(unittest.TestCase):
         self.game.record_points(1, 100, "Alice", 10)
         total = self.game.record_points(1, 100, "Alice", 7)
         self.assertEqual(total, 17)
+
+    def test_winner_role_configuration_is_stored(self):
+        self.game.set_role(1, 99)
+        self.assertEqual(self.game.get_role(1), 99)
+
+    def test_current_winners_are_replaced(self):
+        self.game.set_current_winners(1, [100, 101, 102])
+        self.assertEqual(self.game.get_current_winners(1), [100, 101, 102])
+
+        self.game.set_current_winners(1, [200])
+        self.assertEqual(self.game.get_current_winners(1), [200])
+
+    def test_role_and_winners_survive_database_reopen(self):
+        with tempfile.NamedTemporaryFile(delete=False) as handle:
+            db_path = handle.name
+
+        try:
+            first = KaraokePoints(db_path=db_path)
+            first.set_role(1, 99)
+            first.set_current_winners(1, [100, 101, 102])
+            first.conn.close()
+
+            reopened = KaraokePoints(db_path=db_path)
+            self.assertEqual(reopened.get_role(1), 99)
+            self.assertEqual(reopened.get_current_winners(1), [100, 101, 102])
+            reopened.conn.close()
+        finally:
+            os.unlink(db_path)
 
 
 class MonthlyResetTests(unittest.TestCase):

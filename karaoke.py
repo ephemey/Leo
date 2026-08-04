@@ -86,7 +86,84 @@ def _leaderboard_embed(title: str, entries: list[dict]) -> discord.Embed:
     return embed
 
 
+async def _fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
+    member = guild.get_member(user_id)
+    if member is not None:
+        return member
+    try:
+        return await guild.fetch_member(user_id)
+    except discord.NotFound:
+        return None
+
+
+async def _is_owner(interaction: discord.Interaction) -> bool:
+    return await interaction.client.is_owner(interaction.user)
+
+
+async def apply_monthly_reset(guild: discord.Guild, karaoke_points) -> None:
+    """Reset monthly karaoke scores and rotate the configured winner role."""
+    winners = karaoke_points.maybe_reset_monthly(guild.id)
+    if winners is None:
+        return
+
+    role_id = karaoke_points.get_role(guild.id)
+    role = guild.get_role(role_id) if role_id is not None else None
+
+    new_winner_ids = []
+    if role is not None:
+        previous_winner_ids = karaoke_points.get_current_winners(guild.id)
+        for user_id in previous_winner_ids:
+            member = await _fetch_member(guild, user_id)
+            if member is not None and role in member.roles:
+                await member.remove_roles(role)
+
+        for entry in winners:
+            member = await _fetch_member(guild, entry["user_id"])
+            if member is not None:
+                await member.add_roles(role)
+                new_winner_ids.append(entry["user_id"])
+
+        logger.info(
+            "Applied monthly karaoke winner role in guild='%s' to %d winner(s)",
+            guild.name,
+            len(new_winner_ids),
+        )
+    else:
+        new_winner_ids = [entry["user_id"] for entry in winners]
+        if role_id is None:
+            logger.info("No karaoke winner role configured for guild='%s'; skipping role grants", guild.name)
+        else:
+            logger.warning(
+                "Karaoke winner role %s not found in guild='%s'; skipping role grants",
+                role_id,
+                guild.name,
+            )
+
+    karaoke_points.set_current_winners(guild.id, new_winner_ids)
+    logger.info("Registered %d karaoke winner(s) in DB for guild='%s'", len(new_winner_ids), guild.name)
+
+
 def setup(bot, karaoke_points=None):
+    @bot.tree.command(name="ksetup", description="Set the monthly karaoke winner role (bot owner only)")
+    @app_commands.describe(role="Role to grant to the top three monthly karaoke scorers")
+    @app_commands.guild_only()
+    @app_commands.check(_is_owner)
+    async def karaoke_setup(interaction: discord.Interaction, role: discord.Role):
+        logger.info(
+            "/ksetup called by %s (guild=%s): role=%s",
+            interaction.user,
+            interaction.guild_id,
+            role.id,
+        )
+        if karaoke_points is None:
+            await interaction.response.send_message("Karaoke points are not enabled.", ephemeral=True)
+            return
+        karaoke_points.set_role(interaction.guild_id, role.id)
+        await interaction.response.send_message(
+            f"✅ The {role.mention} role will be awarded to the top three monthly karaoke scorers.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="kadd", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
