@@ -80,10 +80,6 @@ async def _fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | 
         return None
 
 
-async def _is_owner(interaction: discord.Interaction) -> bool:
-    return await interaction.client.is_owner(interaction.user)
-
-
 async def _safe_send(coro, description: str, channel: discord.TextChannel) -> None:
     """Await a Discord send/reply/reaction coroutine, swallowing permission errors.
 
@@ -263,14 +259,14 @@ def setup(bot, chengyu_game, dictionary) -> None:
         )
         await interaction.response.send_message(embed=embed)
 
-    @bot.tree.command(name="cytimer", description="Show how long until the Chengyu monthly reset")
-    async def cytimer(interaction: discord.Interaction):
-        logger.info("/cytimer triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
+    @bot.tree.command(name="timer", description="Show how long until all monthly leaderboards reset")
+    async def timer(interaction: discord.Interaction):
+        logger.info("/timer triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         delta = chengyu_game.get_time_until_reset()
         hours, remainder = divmod(int(delta.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
         await interaction.response.send_message(
-            f"⏰ The Chengyu leaderboard resets in {hours}h {minutes}m {seconds}s."
+            f"⏰ All monthly leaderboards reset in {hours}h {minutes}m {seconds}s."
         )
 
     @bot.tree.command(name="cyscore", description="Show the current Chengyu score for a user")
@@ -309,68 +305,4 @@ def setup(bot, chengyu_game, dictionary) -> None:
 
         await interaction.response.send_message(
             f"📌 Previous Chengyu: {entry_text}\n🗣️ {pinyin}\n📚 {defs_text}"
-        )
-
-    @bot.tree.command(name="cyedit", description="Edit a user's current Chengyu score (bot owner only)")
-    @app_commands.describe(
-        user="The user whose score to edit (@mention or user ID)",
-        action="Whether to add, deduct, or set the score",
-        amount="The number of points",
-        board="Which leaderboard to edit",
-    )
-    @app_commands.choices(action=[
-        app_commands.Choice(name="Add", value="add"),
-        app_commands.Choice(name="Deduct", value="deduct"),
-        app_commands.Choice(name="Set", value="set"),
-    ])
-    @app_commands.choices(board=[
-        app_commands.Choice(name="Monthly leaderboard", value="monthly"),
-        app_commands.Choice(name="All-time leaderboard", value="alltime"),
-    ])
-    @app_commands.check(_is_owner)
-    async def cyedit(interaction: discord.Interaction, user: str, action: str, amount: int, board: str):
-        logger.info("/cyedit called by %s (guild=%s): board=%s action=%s amount=%d target_input='%s'", interaction.user, interaction.guild_id, board, action, amount, user)
-
-        match = re.fullmatch(r"<@!?(\d+)>", user.strip())
-        user_id_str = match.group(1) if match else user.strip()
-
-        if not user_id_str.isdigit():
-            logger.info("/cyedit failed: could not parse a user from input '%s' (requested by %s)", user, interaction.user)
-            await interaction.response.send_message("❌ Could not parse that as a user mention or ID.", ephemeral=True)
-            return
-
-        user_id = int(user_id_str)
-
-        if amount < 0:
-            logger.info("/cyedit failed: negative amount %d given by %s", amount, interaction.user)
-            await interaction.response.send_message("Amount must be a positive number.", ephemeral=True)
-            return
-
-        member = await _fetch_member(interaction.guild, user_id) if interaction.guild else None
-        if member is not None:
-            username = member.display_name
-            mention = member.mention
-        else:
-            try:
-                fetched_user = await interaction.client.fetch_user(user_id)
-            except discord.NotFound:
-                logger.info("/cyedit failed: no user found with id=%d (requested by %s)", user_id, interaction.user)
-                await interaction.response.send_message(f"❌ Could not find a user with ID {user_id}.", ephemeral=True)
-                return
-            except discord.HTTPException as e:
-                logger.error("/cyedit: failed to fetch user id=%d: %s", user_id, e)
-                await interaction.response.send_message("❌ Something went wrong looking up that user.", ephemeral=True)
-                return
-            username = fetched_user.display_name
-            mention = fetched_user.mention
-            logger.info("/cyedit: target user id=%d is not a member of this guild, resolved via fetch_user", user_id)
-
-        new_score = chengyu_game.edit_score(interaction.guild_id or 0, user_id, username, action, amount, board)
-        logger.info("/cyedit: %s (id=%d) score is now %d after action=%s amount=%d (guild=%s, board=%s, requested by %s)", username, user_id, new_score, action, amount, interaction.guild_id, board, interaction.user)
-
-        action_past = {"add": "Added", "deduct": "Deducted", "set": "Set"}[action]
-        board_name = "all-time" if board == "alltime" else "monthly"
-        await interaction.response.send_message(
-            f"✅ {action_past} {amount} point(s) for {mention} on the {board_name} leaderboard. Their score is now {new_score}.",
-            ephemeral=True,
         )

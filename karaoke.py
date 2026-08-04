@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Optional
 
 import discord
@@ -7,6 +8,10 @@ from discord import app_commands
 logger = logging.getLogger(__name__)
 
 karaoke_queues = {}
+karaoke_notice = {}
+karaoke_notice_cooldowns = {}  # (guild_id, user_id) -> monotonic timestamp of last notice
+
+_NOTICE_COOLDOWN = 60.0  # seconds
 
 
 def _queue_key(interaction: discord.Interaction) -> tuple[int, int]:
@@ -81,7 +86,84 @@ def _leaderboard_embed(title: str, entries: list[dict]) -> discord.Embed:
     return embed
 
 
+async def _fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
+    member = guild.get_member(user_id)
+    if member is not None:
+        return member
+    try:
+        return await guild.fetch_member(user_id)
+    except discord.NotFound:
+        return None
+
+
+async def _is_owner(interaction: discord.Interaction) -> bool:
+    return await interaction.client.is_owner(interaction.user)
+
+
+async def apply_monthly_reset(guild: discord.Guild, karaoke_points) -> None:
+    """Reset monthly karaoke scores and rotate the configured winner role."""
+    winners = karaoke_points.maybe_reset_monthly(guild.id)
+    if winners is None:
+        return
+
+    role_id = karaoke_points.get_role(guild.id)
+    role = guild.get_role(role_id) if role_id is not None else None
+
+    new_winner_ids = []
+    if role is not None:
+        previous_winner_ids = karaoke_points.get_current_winners(guild.id)
+        for user_id in previous_winner_ids:
+            member = await _fetch_member(guild, user_id)
+            if member is not None and role in member.roles:
+                await member.remove_roles(role)
+
+        for entry in winners:
+            member = await _fetch_member(guild, entry["user_id"])
+            if member is not None:
+                await member.add_roles(role)
+                new_winner_ids.append(entry["user_id"])
+
+        logger.info(
+            "Applied monthly karaoke winner role in guild='%s' to %d winner(s)",
+            guild.name,
+            len(new_winner_ids),
+        )
+    else:
+        new_winner_ids = [entry["user_id"] for entry in winners]
+        if role_id is None:
+            logger.info("No karaoke winner role configured for guild='%s'; skipping role grants", guild.name)
+        else:
+            logger.warning(
+                "Karaoke winner role %s not found in guild='%s'; skipping role grants",
+                role_id,
+                guild.name,
+            )
+
+    karaoke_points.set_current_winners(guild.id, new_winner_ids)
+    logger.info("Registered %d karaoke winner(s) in DB for guild='%s'", len(new_winner_ids), guild.name)
+
+
 def setup(bot, karaoke_points=None):
+    @bot.tree.command(name="ksetup", description="Set the monthly karaoke winner role (bot owner only)")
+    @app_commands.describe(role="Role to grant to the top three monthly karaoke scorers")
+    @app_commands.guild_only()
+    @app_commands.check(_is_owner)
+    async def karaoke_setup(interaction: discord.Interaction, role: discord.Role):
+        logger.info(
+            "/ksetup called by %s (guild=%s): role=%s",
+            interaction.user,
+            interaction.guild_id,
+            role.id,
+        )
+        if karaoke_points is None:
+            await interaction.response.send_message("Karaoke points are not enabled.", ephemeral=True)
+            return
+        karaoke_points.set_role(interaction.guild_id, role.id)
+        await interaction.response.send_message(
+            f"✅ The {role.mention} role will be awarded to the top three monthly karaoke scorers.",
+            ephemeral=True,
+        )
+
     @bot.tree.command(name="kadd", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
@@ -249,3 +331,53 @@ def setup(bot, karaoke_points=None):
             f"🎤 {target.mention} — {monthly} pts this month, {alltime} pts all-time.",
             ephemeral=True,
         )
+
+    @bot.tree.command(name="knotice", description="Toggle the karaoke welcome notice for users joining a voice channel")
+    @app_commands.describe(state="on or off (omit to toggle)")
+    @app_commands.choices(state=[
+        app_commands.Choice(name="on", value="on"),
+        app_commands.Choice(name="off", value="off"),
+    ])
+    async def karaoke_notice_cmd(interaction: discord.Interaction, state: Optional[str] = None):
+        logger.info("/knotice called by %s (guild=%s, state=%s)", interaction.user, interaction.guild_id, state)
+        guild_id = interaction.guild_id
+        current = karaoke_notice.get(guild_id, False)
+        if state is None:
+            new_state = not current
+        else:
+            new_state = state == "on"
+        karaoke_notice[guild_id] = new_state
+        status = "enabled" if new_state else "disabled"
+        logger.info("/knotice: notice %s for guild=%s", status, guild_id)
+        await interaction.response.send_message(f"🔔 Karaoke welcome notice {status}.", ephemeral=True)
+
+    @bot.listen("on_voice_state_update")
+    async def karaoke_vc_notice(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        if member.bot:
+            return
+        if after.channel is None or before.channel == after.channel:
+            return
+        guild_id = member.guild.id
+        if not karaoke_notice.get(guild_id, False):
+            return
+        active_queues = [(key, q) for key, q in karaoke_queues.items() if key[0] == guild_id and q]
+        if not active_queues:
+            return
+        cooldown_key = (guild_id, member.id)
+        now = time.monotonic()
+        if now - karaoke_notice_cooldowns.get(cooldown_key, 0.0) < _NOTICE_COOLDOWN:
+            return
+        karaoke_notice_cooldowns[cooldown_key] = now
+        msg = f"{member.mention} Welcome to the karaoke channel! Please keep your mic muted when someone else is singing 👍"
+        for (_, channel_id), _ in active_queues:
+            channel = bot.get_channel(channel_id)
+            if channel is not None:
+                await channel.send(msg)
+                logger.info("Karaoke VC notice sent for %s in guild=%s (text_channel=%s)", member, guild_id, channel_id)
+
+    @bot.listen("on_guild_channel_delete")
+    async def karaoke_channel_cleanup(channel: discord.abc.GuildChannel):
+        key = (channel.guild.id, channel.id)
+        if key in karaoke_queues:
+            del karaoke_queues[key]
+            logger.info("Removed karaoke queue for deleted channel=%s in guild=%s", channel.id, channel.guild.id)

@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 import chengyu
+import chengyu_commands
+import discord
+from discord.ext import commands
 from chengyu_commands import apply_monthly_reset
 
 
@@ -195,6 +198,17 @@ class ApplyMonthlyResetTests(unittest.IsolatedAsyncioTestCase):
 
         old_winner.remove_roles.assert_not_awaited()
         new_winner.add_roles.assert_awaited_once_with(role)
+
+
+class TimerCommandTests(unittest.TestCase):
+    def test_timer_replaces_cytimer(self):
+        bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+        game = chengyu.ChengyuGame(db_path=":memory:")
+        chengyu_commands.setup(bot, game, MagicMock())
+
+        self.assertIsNotNone(bot.tree.get_command("timer"))
+        self.assertIsNone(bot.tree.get_command("cytimer"))
+        self.assertIsNone(bot.tree.get_command("cyedit"))
 
 
 if __name__ == "__main__":

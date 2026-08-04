@@ -19,7 +19,8 @@ def setup(bot) -> None:
 
         embed.add_field(name="General", value=(
             "`/ping` — Check the bot's latency\n"
-            "`/help` — Show this message"
+            "`/help` — Show this message\n"
+            "`/timer` — Show when all monthly leaderboards reset"
         ), inline=False)
 
         embed.add_field(name="Dictionary", value=(
@@ -31,16 +32,20 @@ def setup(bot) -> None:
             "`/cycurrent` — Show the most recent valid entry in this channel\n"
             "`/cyscore [user]` — Show a user's score for the current month\n"
             "`/cylb` — Monthly leaderboard\n"
-            "`/cylb-alltime` — All-time leaderboard\n"
-            "`/cytimer` — Time remaining until the monthly reset"
+            "`/cylb-alltime` — All-time leaderboard"
         ), inline=False)
 
         embed.add_field(name="Karaoke", value=(
+            "`/ksetup <role>` — Set the monthly winner role (bot owner only)\n"
             "`/kadd [song] [artist]` — Join the karaoke queue with an optional song and artist\n"
             "`/kremove [position]` — Remove yourself, or a position from the queue\n"
             "`/kbump [position]` — Move yourself or a position to the top\n"
             "`/knext` — Advance past the current singer\n"
             "`/kqueue` — Show the current queue"
+        ), inline=False)
+
+        embed.add_field(name="Bot Owner", value=(
+            "`/dbedit` — Edit a stored database record"
         ), inline=False)
 
         await interaction.response.send_message(embed=embed)

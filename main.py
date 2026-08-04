@@ -9,11 +9,13 @@ from dotenv import load_dotenv
 
 import chengyu
 import chengyu_commands
+import database_commands
 import dictionary_commands
 import general_commands
 import karaoke_points as karaoke_points_module
 import startup_checks
 from dictionary import ChineseDictionary, XinhuaDictionary
+from karaoke import apply_monthly_reset as apply_karaoke_monthly_reset
 from karaoke import karaoke_queues
 from karaoke import setup as register_karaoke_commands
 from logging_config import configure_logging
@@ -46,6 +48,7 @@ xinhua_dictionary = XinhuaDictionary()
 chengyu_game = chengyu.ChengyuGame(dictionary=dictionary, db_path=CHENGYU_DB_PATH)
 karaoke_pts = karaoke_points_module.KaraokePoints(db_path=KARAOKE_DB_PATH)
 
+database_commands.setup(bot, chengyu_game, karaoke_pts)
 register_karaoke_commands(bot, karaoke_pts)
 chengyu_commands.setup(bot, chengyu_game, dictionary)
 dictionary_commands.setup(bot, dictionary, xinhua_dictionary)
@@ -101,9 +104,7 @@ async def monthly_reset_check():
         except Exception:
             logger.exception("Failed to apply monthly Chengyu reset for guild='%s'", guild.name)
         try:
-            winners = karaoke_pts.maybe_reset_monthly(guild.id)
-            if winners is not None:
-                logger.info("Karaoke monthly reset for guild='%s', top scorers=%s", guild.name, winners)
+            await apply_karaoke_monthly_reset(guild, karaoke_pts)
         except Exception:
             logger.exception("Failed to apply monthly karaoke reset for guild='%s'", guild.name)
 

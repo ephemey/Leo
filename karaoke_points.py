@@ -47,8 +47,55 @@ class KaraokePoints:
                     month INTEGER NOT NULL
                 )
             """)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS karaoke_config (
+                    guild_id INTEGER PRIMARY KEY,
+                    role_id INTEGER
+                )
+            """)
+            self.conn.execute("""
+                CREATE TABLE IF NOT EXISTS karaoke_winners (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            """)
             self.conn.commit()
         logger.info("karaoke: DB initialised at %s", self.db_path)
+
+    def set_role(self, guild_id: int, role_id: Optional[int]) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO karaoke_config (guild_id, role_id) VALUES (?, ?) "
+                "ON CONFLICT(guild_id) DO UPDATE SET role_id = excluded.role_id",
+                (guild_id, role_id),
+            )
+            self.conn.commit()
+        logger.info("Karaoke winner role set for guild=%s to role=%s", guild_id, role_id)
+
+    def get_role(self, guild_id: int) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT role_id FROM karaoke_config WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchone()
+        return int(row[0]) if (row and row[0] is not None) else None
+
+    def get_current_winners(self, guild_id: int) -> list[int]:
+        rows = self.conn.execute(
+            "SELECT user_id FROM karaoke_winners WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def set_current_winners(self, guild_id: int, user_ids: list[int]) -> None:
+        with self._lock:
+            self.conn.execute("DELETE FROM karaoke_winners WHERE guild_id = ?", (guild_id,))
+            self.conn.executemany(
+                "INSERT INTO karaoke_winners (guild_id, user_id) VALUES (?, ?)",
+                [(guild_id, user_id) for user_id in user_ids],
+            )
+            self.conn.commit()
+        logger.info("Set current karaoke winners for guild=%s to %s", guild_id, user_ids)
 
     @staticmethod
     def calculate_points(audience_count: int) -> int:
