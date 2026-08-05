@@ -110,7 +110,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             return
 
         configured_channel_id = chengyu_game.get_channel(message.guild.id)
-        if configured_channel_id is not None and message.channel.id != configured_channel_id:
+        if configured_channel_id is None or message.channel.id != configured_channel_id:
             return
 
         if not message.content.strip():

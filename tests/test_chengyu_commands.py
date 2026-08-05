@@ -200,6 +200,79 @@ class ApplyMonthlyResetTests(unittest.IsolatedAsyncioTestCase):
         new_winner.add_roles.assert_awaited_once_with(role)
 
 
+class FakeDictionary:
+    def __init__(self, entries=None):
+        self.by_simplified = entries or {}
+
+    def search(self, query):
+        return self.by_simplified.get(query)
+
+
+def _make_text_channel(channel_id, name="chengyu"):
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = channel_id
+    channel.name = name
+    channel.send = AsyncMock()
+    return channel
+
+
+def _make_message(guild, channel, content, author_id=100, author_name="Alice"):
+    message = MagicMock(spec=discord.Message)
+    message.author = MagicMock(bot=False, id=author_id, name=author_name, display_name=author_name)
+    message.guild = guild
+    message.channel = channel
+    message.content = content
+    message.reply = AsyncMock()
+    message.add_reaction = AsyncMock()
+    return message
+
+
+class OnMessageChannelRestrictionTests(unittest.IsolatedAsyncioTestCase):
+    ENTRY = {"simplified": "画龙点睛", "pinyin_raw": "hua4 long2 dian3 jing1", "definitions": ["idiom"]}
+
+    def _make_bot_and_game(self, entries=None):
+        bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+        game = chengyu.ChengyuGame(db_path=":memory:")
+        dictionary = FakeDictionary(entries or {"画龙点睛": self.ENTRY})
+        chengyu_commands.setup(bot, game, dictionary)
+        return bot, game
+
+    async def test_ignored_when_no_channel_configured(self):
+        bot, game = self._make_bot_and_game()
+        guild = MagicMock(id=1, name="Test Guild")
+        channel = _make_text_channel(42)
+        message = _make_message(guild, channel, "画龙点睛")
+
+        await bot.on_message(message)
+
+        message.add_reaction.assert_not_called()
+        self.assertIsNone(game.get_score(1, 100))
+
+    async def test_ignored_outside_configured_channel(self):
+        bot, game = self._make_bot_and_game()
+        guild = MagicMock(id=1, name="Test Guild")
+        game.set_channel(1, 42)
+        other_channel = _make_text_channel(99, name="general")
+        message = _make_message(guild, other_channel, "画龙点睛")
+
+        await bot.on_message(message)
+
+        message.add_reaction.assert_not_called()
+        self.assertIsNone(game.get_score(1, 100))
+
+    async def test_accepted_in_configured_channel(self):
+        bot, game = self._make_bot_and_game()
+        guild = MagicMock(id=1, name="Test Guild")
+        game.set_channel(1, 42)
+        channel = _make_text_channel(42)
+        message = _make_message(guild, channel, "画龙点睛")
+
+        await bot.on_message(message)
+
+        message.add_reaction.assert_awaited_once_with("✅")
+        self.assertIsNotNone(game.get_score(1, 100))
+
+
 class TimerCommandTests(unittest.TestCase):
     def test_timer_replaces_cytimer(self):
         bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
