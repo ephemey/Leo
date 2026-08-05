@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 karaoke_queues = {}
 karaoke_notice = {}
 karaoke_notice_channels = {}  # guild_id -> channel_id the /knotice command was last run in
+karaoke_notice_vc = {}  # guild_id -> voice channel_id to watch for joins
 karaoke_notice_cooldowns = {}  # (guild_id, user_id) -> monotonic timestamp of last notice
 
 _NOTICE_COOLDOWN = 60.0  # seconds
@@ -347,10 +348,27 @@ def setup(bot, karaoke_points=None):
             new_state = not current
         else:
             new_state = state == "on"
+
+        if new_state:
+            if interaction.user.voice is None or interaction.user.voice.channel is None:
+                logger.info("/knotice: %s is not in a voice channel", interaction.user)
+                await interaction.response.send_message(
+                    "❌ You must be in the voice channel you want to watch to enable the notice.",
+                    ephemeral=True,
+                )
+                return
+            karaoke_notice_vc[guild_id] = interaction.user.voice.channel.id
+
         karaoke_notice[guild_id] = new_state
         karaoke_notice_channels[guild_id] = interaction.channel_id
         status = "enabled" if new_state else "disabled"
-        logger.info("/knotice: notice %s for guild=%s (channel=%s)", status, guild_id, interaction.channel_id)
+        logger.info(
+            "/knotice: notice %s for guild=%s (text_channel=%s, voice_channel=%s)",
+            status,
+            guild_id,
+            interaction.channel_id,
+            karaoke_notice_vc.get(guild_id),
+        )
         await interaction.response.send_message(f"🔔 Karaoke welcome notice {status}.", ephemeral=True)
 
     @bot.listen("on_voice_state_update")
@@ -361,6 +379,9 @@ def setup(bot, karaoke_points=None):
             return
         guild_id = member.guild.id
         if not karaoke_notice.get(guild_id, False):
+            return
+        watched_vc_id = karaoke_notice_vc.get(guild_id)
+        if watched_vc_id is None or after.channel.id != watched_vc_id:
             return
         channel_id = karaoke_notice_channels.get(guild_id)
         if channel_id is None:
