@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import random
@@ -82,6 +83,16 @@ class ChengyuGame:
                     guild_id INTEGER PRIMARY KEY,
                     year INTEGER NOT NULL,
                     month INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chengyu_channel_state (
+                    guild_id INTEGER NOT NULL,
+                    channel_id INTEGER NOT NULL,
+                    entry_json TEXT NOT NULL,
+                    PRIMARY KEY (guild_id, channel_id)
                 )
                 """
             )
@@ -290,10 +301,32 @@ class ChengyuGame:
         return int(row[0]) if (row and row[0] is not None) else None
 
     def get_channel_state(self, guild_id: int, channel_id: int) -> dict:
-        return self.channel_states.setdefault((guild_id, channel_id), {"entry": None, "used_entries": set()})
+        key = (guild_id, channel_id)
+        if key not in self.channel_states:
+            row = self.conn.execute(
+                "SELECT entry_json FROM chengyu_channel_state WHERE guild_id = ? AND channel_id = ?",
+                (guild_id, channel_id),
+            ).fetchone()
+            entry = json.loads(row[0]) if row else None
+            self.channel_states[key] = {"entry": entry, "used_entries": set()}
+        return self.channel_states[key]
 
     def set_channel_state(self, guild_id: int, channel_id: int, entry: Optional[dict]) -> None:
-        self.channel_states[(guild_id, channel_id)] = {"entry": entry, "used_entries": self.channel_states.get((guild_id, channel_id), {}).get("used_entries", set())}
+        key = (guild_id, channel_id)
+        self.channel_states[key] = {"entry": entry, "used_entries": self.channel_states.get(key, {}).get("used_entries", set())}
+        with self._lock:
+            if entry is None:
+                self.conn.execute(
+                    "DELETE FROM chengyu_channel_state WHERE guild_id = ? AND channel_id = ?",
+                    (guild_id, channel_id),
+                )
+            else:
+                self.conn.execute(
+                    "INSERT INTO chengyu_channel_state (guild_id, channel_id, entry_json) VALUES (?, ?, ?) "
+                    "ON CONFLICT(guild_id, channel_id) DO UPDATE SET entry_json = excluded.entry_json",
+                    (guild_id, channel_id, json.dumps(entry)),
+                )
+            self.conn.commit()
 
     def mark_used_entry(self, guild_id: int, channel_id: int, entry_text: str) -> None:
         conn = self.conn
