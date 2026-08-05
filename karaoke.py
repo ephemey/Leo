@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 karaoke_queues = {}
 karaoke_notice = {}
+karaoke_notice_channels = {}  # guild_id -> channel_id the /knotice command was last run in
 karaoke_notice_cooldowns = {}  # (guild_id, user_id) -> monotonic timestamp of last notice
 
 _NOTICE_COOLDOWN = 60.0  # seconds
@@ -347,8 +348,9 @@ def setup(bot, karaoke_points=None):
         else:
             new_state = state == "on"
         karaoke_notice[guild_id] = new_state
+        karaoke_notice_channels[guild_id] = interaction.channel_id
         status = "enabled" if new_state else "disabled"
-        logger.info("/knotice: notice %s for guild=%s", status, guild_id)
+        logger.info("/knotice: notice %s for guild=%s (channel=%s)", status, guild_id, interaction.channel_id)
         await interaction.response.send_message(f"🔔 Karaoke welcome notice {status}.", ephemeral=True)
 
     @bot.listen("on_voice_state_update")
@@ -360,8 +362,11 @@ def setup(bot, karaoke_points=None):
         guild_id = member.guild.id
         if not karaoke_notice.get(guild_id, False):
             return
-        active_queues = [(key, q) for key, q in karaoke_queues.items() if key[0] == guild_id and q]
-        if not active_queues:
+        channel_id = karaoke_notice_channels.get(guild_id)
+        if channel_id is None:
+            return
+        channel = bot.get_channel(channel_id)
+        if channel is None:
             return
         cooldown_key = (guild_id, member.id)
         now = time.monotonic()
@@ -369,11 +374,8 @@ def setup(bot, karaoke_points=None):
             return
         karaoke_notice_cooldowns[cooldown_key] = now
         msg = f"{member.mention} Welcome to the karaoke channel! Please keep your mic muted when someone else is singing 👍"
-        for (_, channel_id), _ in active_queues:
-            channel = bot.get_channel(channel_id)
-            if channel is not None:
-                await channel.send(msg)
-                logger.info("Karaoke VC notice sent for %s in guild=%s (text_channel=%s)", member, guild_id, channel_id)
+        await channel.send(msg)
+        logger.info("Karaoke VC notice sent for %s in guild=%s (text_channel=%s)", member, guild_id, channel_id)
 
     @bot.listen("on_guild_channel_delete")
     async def karaoke_channel_cleanup(channel: discord.abc.GuildChannel):
