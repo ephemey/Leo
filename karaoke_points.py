@@ -205,16 +205,20 @@ class KaraokePoints:
         if current_period <= stored_period:
             return None
 
+        rows = self.conn.execute(
+            "SELECT user_id, username, points FROM karaoke_scores "
+            "WHERE guild_id = ? ORDER BY points DESC, user_id ASC LIMIT 3",
+            (guild_id,),
+        ).fetchall()
+        winners = [{"user_id": r[0], "username": r[1], "points": r[2]} for r in rows]
+        logger.info("Monthly karaoke reset due for guild=%s: %d winner(s) fetched", guild_id, len(winners))
+        return winners
+
+    def commit_monthly_reset(self, guild_id: int) -> None:
+        now = datetime.now()
+        current_period = (now.year, now.month)
         with self._lock:
-            rows = self.conn.execute(
-                "SELECT user_id, username, points FROM karaoke_scores "
-                "WHERE guild_id = ? ORDER BY points DESC, user_id ASC LIMIT 3",
-                (guild_id,),
-            ).fetchall()
             self.conn.execute("DELETE FROM karaoke_scores WHERE guild_id = ?", (guild_id,))
             self.conn.commit()
-
         self._set_reset_period(guild_id, *current_period)
-        winners = [{"user_id": r[0], "username": r[1], "points": r[2]} for r in rows]
-        logger.info("Reset monthly karaoke scores for guild=%s, top scorers=%s", guild_id, winners)
-        return winners
+        logger.info("Monthly karaoke DB cleared and reset period updated for guild=%s", guild_id)

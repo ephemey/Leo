@@ -387,18 +387,40 @@ class ChengyuGame:
         stored_period = self._get_reset_period(guild_id)
 
         if stored_period is None:
-            # First time tracking this guild's reset checkpoint: adopt the
-            # current month as the baseline rather than wiping scores that
-            # may have been accumulating before this checkpoint existed.
             self._set_reset_period(guild_id, *current_period)
             return None
 
         if current_period <= stored_period:
             return None
 
-        winners = self.reset_monthly_state(guild_id)
-        self._set_reset_period(guild_id, *current_period)
+        conn = self.conn
+        rows = conn.execute(
+            """
+            SELECT user_id, username, valid_entries
+            FROM chengyu_scores
+            WHERE guild_id = ?
+            ORDER BY valid_entries DESC, user_id ASC
+            LIMIT 3
+            """,
+            (guild_id,),
+        ).fetchall()
+        winners = [
+            {"user_id": user_id, "username": username, "valid_entries": valid_entries}
+            for user_id, username, valid_entries in rows
+        ]
+        logger.info("Monthly chengyu reset due for guild=%s: %d winner(s) fetched", guild_id, len(winners))
         return winners
+
+    def commit_monthly_reset(self, guild_id: int) -> None:
+        now = datetime.now()
+        current_period = (now.year, now.month)
+        conn = self.conn
+        with self._lock:
+            conn.execute("DELETE FROM chengyu_scores WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM chengyu_used_entries WHERE guild_id = ?", (guild_id,))
+            conn.commit()
+        self._set_reset_period(guild_id, *current_period)
+        logger.info("Monthly chengyu DB cleared and reset period updated for guild=%s", guild_id)
 
     def reset_monthly_state(self, guild_id: int) -> list[dict]:
         conn = self.conn
