@@ -4,23 +4,28 @@ import re
 import discord
 from discord import app_commands
 
+from bot_policy import SERVER_ONLY_MESSAGE
 from startup_checks import REQUIRED_CHANNEL_PERMISSIONS
 
 logger = logging.getLogger(__name__)
 
+
+async def _is_owner(interaction: discord.Interaction) -> bool:
+    return await interaction.client.is_owner(interaction.user)
 
 async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
     """Check whether the monthly Chengyu reset is due for this guild and, if so,
     grant the winner role to the top scorers (if configured), announce the
     reset, and post a new idiom to restart the chain.
 
-    Safe to call repeatedly (e.g. from an hourly poll): resets only actually
-    occur once the current calendar month has rolled over, so repeated calls
-    within the same month are no-ops.
+    The monthly DB is only cleared as the very last step, after all Discord
+    operations have completed without error.
     """
     winners = chengyu_game.maybe_reset_monthly_state(guild.id)
     if winners is None:
         return
+
+    logger.info("Monthly chengyu reset triggered for guild='%s': %d winner(s)", guild.name, len(winners))
 
     role_id = chengyu_game.get_role(guild.id)
     role = guild.get_role(role_id) if role_id is not None else None
@@ -28,16 +33,22 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
     new_winner_ids = []
     if role is not None:
         previous_winner_ids = chengyu_game.get_current_winners(guild.id)
+        logger.info("Removing chengyu winner role from %d previous winner(s) in guild='%s'", len(previous_winner_ids), guild.name)
         for user_id in previous_winner_ids:
             member = await _fetch_member(guild, user_id)
             if member is not None and role in member.roles:
                 await member.remove_roles(role)
+                logger.info("Removed chengyu winner role from %s in guild='%s'", member, guild.name)
 
+        logger.info("Granting chengyu winner role to %d new winner(s) in guild='%s'", len(winners), guild.name)
         for entry in winners:
             member = await _fetch_member(guild, entry["user_id"])
             if member is not None:
                 await member.add_roles(role)
                 new_winner_ids.append(entry["user_id"])
+                logger.info("Granted chengyu winner role to %s in guild='%s'", member, guild.name)
+            else:
+                logger.warning("Could not find member %s to grant chengyu winner role in guild='%s'", entry["user_id"], guild.name)
 
         logger.info("Applied monthly chengyu winner role in guild='%s' to %d winner(s)", guild.name, len(new_winner_ids))
     else:
@@ -52,17 +63,24 @@ async def apply_monthly_reset(guild: discord.Guild, chengyu_game) -> None:
 
     configured_channel_id = chengyu_game.get_channel(guild.id)
     if configured_channel_id is None:
-        return
+        logger.info("No chengyu channel configured for guild='%s'; skipping announcement", guild.name)
+    else:
+        channel = guild.get_channel(configured_channel_id)
+        if channel is None or not hasattr(channel, "send"):
+            logger.warning("Chengyu channel %s not found or not sendable in guild='%s'", configured_channel_id, guild.name)
+        else:
+            await channel.send(chengyu_game.format_reset_message(winners))
+            logger.info("Sent chengyu reset announcement in guild='%s' channel=%s", guild.name, configured_channel_id)
+            continuation = chengyu_game.get_random_unused_idiom(guild.id, channel.id)
+            if continuation is not None:
+                continuation_text = continuation.get("simplified") or continuation.get("traditional") or "an idiom"
+                chengyu_game.mark_used_entry(guild.id, channel.id, continuation_text)
+                chengyu_game.set_channel_state(guild.id, channel.id, continuation)
+                await channel.send(f"🔁 Starting a new chain with: {continuation_text}")
+                logger.info("Posted chengyu chain continuation '%s' in guild='%s'", continuation_text, guild.name)
 
-    channel = guild.get_channel(configured_channel_id)
-    if channel is not None and hasattr(channel, "send"):
-        await channel.send(chengyu_game.format_reset_message(winners))
-        continuation = chengyu_game.get_random_unused_idiom(guild.id, channel.id)
-        if continuation is not None:
-            continuation_text = continuation.get("simplified") or continuation.get("traditional") or "an idiom"
-            chengyu_game.mark_used_entry(guild.id, channel.id, continuation_text)
-            chengyu_game.set_channel_state(guild.id, channel.id, continuation)
-            await channel.send(f"🔁 Starting a new chain with: {continuation_text}")
+    chengyu_game.commit_monthly_reset(guild.id)
+    logger.info("Monthly chengyu reset complete for guild='%s'", guild.name)
 
 
 async def _fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
@@ -106,7 +124,17 @@ async def _safe_send(coro, description: str, channel: discord.TextChannel) -> No
 def setup(bot, chengyu_game, dictionary) -> None:
     @bot.event
     async def on_message(message: discord.Message):
-        if message.author.bot or not message.guild or not isinstance(message.channel, discord.TextChannel):
+        if message.author.bot:
+            return
+
+        if message.guild is None:
+            try:
+                await message.channel.send(SERVER_ONLY_MESSAGE)
+            except discord.HTTPException as e:
+                logger.warning("Failed to send server-only DM notice: %s", e)
+            return
+
+        if not isinstance(message.channel, discord.TextChannel):
             return
 
         configured_channel_id = chengyu_game.get_channel(message.guild.id)
@@ -196,6 +224,8 @@ def setup(bot, chengyu_game, dictionary) -> None:
         channel="The text channel to use for Chengyu submissions",
         role="Optional role to grant to the top three monthly winners"
     )
+    @app_commands.guild_only()
+    @app_commands.check(_is_owner)
     async def cysetup(interaction: discord.Interaction, channel: discord.TextChannel, role: discord.Role | None = None):
         logger.info("/cysetup triggered by %s in guild='%s': channel=%s role=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, channel.id, role.id if role else None)
         chengyu_game.set_channel(interaction.guild_id, channel.id, role.id if role else None)
@@ -222,6 +252,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             pass
 
     @bot.tree.command(name="cylb", description="Show the Chengyu Jielong leaderboard for this server")
+    @app_commands.guild_only()
     async def cylb(interaction: discord.Interaction):
         logger.info("/cylb triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         leaderboard = chengyu_game.get_leaderboard(interaction.guild_id or 0)
@@ -241,6 +272,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         await interaction.response.send_message(embed=embed)
 
     @bot.tree.command(name="cylb-alltime", description="Show the all-time Chengyu Jielong leaderboard for this server")
+    @app_commands.guild_only()
     async def cylb_alltime(interaction: discord.Interaction):
         logger.info("/cylb-alltime triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         leaderboard = chengyu_game.get_alltime_leaderboard(interaction.guild_id or 0)
@@ -260,6 +292,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         await interaction.response.send_message(embed=embed)
 
     @bot.tree.command(name="timer", description="Show how long until all monthly leaderboards reset")
+    @app_commands.guild_only()
     async def timer(interaction: discord.Interaction):
         logger.info("/timer triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         delta = chengyu_game.get_time_until_reset()
@@ -271,6 +304,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
 
     @bot.tree.command(name="cyscore", description="Show the current Chengyu score for a user")
     @app_commands.describe(user="Optional user to look up; defaults to you")
+    @app_commands.guild_only()
     async def cyscore(interaction: discord.Interaction, user: discord.Member | None = None):
         logger.info("/cyscore triggered by %s in guild='%s' for user=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, user.id if user else interaction.user.id)
         target_user = user or interaction.user
@@ -285,6 +319,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         )
 
     @bot.tree.command(name="cycurrent", description="Show the most recent valid Chengyu entry in this channel")
+    @app_commands.guild_only()
     async def cycurrent(interaction: discord.Interaction):
         logger.info("/cycurrent triggered by %s in guild='%s' channel=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, interaction.channel_id if interaction.channel else None)
         if not interaction.guild_id or not interaction.channel:

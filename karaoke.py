@@ -12,6 +12,9 @@ karaoke_notice = {}
 karaoke_notice_channels = {}  # guild_id -> channel_id the /knotice command was last run in
 karaoke_notice_vc = {}  # guild_id -> voice channel_id to watch for joins
 karaoke_notice_cooldowns = {}  # (guild_id, user_id) -> monotonic timestamp of last notice
+karaoke_turn_start_times = {}  # (guild_id, channel_id) -> monotonic timestamp when current singer's turn began
+
+_MIN_TURN_SECONDS = 10.0
 
 _NOTICE_COOLDOWN = 60.0  # seconds
 
@@ -103,10 +106,16 @@ async def _is_owner(interaction: discord.Interaction) -> bool:
 
 
 async def apply_monthly_reset(guild: discord.Guild, karaoke_points) -> None:
-    """Reset monthly karaoke scores and rotate the configured winner role."""
+    """Reset monthly karaoke scores and rotate the configured winner role.
+
+    The monthly DB is only cleared as the very last step, after all Discord
+    operations have completed without error.
+    """
     winners = karaoke_points.maybe_reset_monthly(guild.id)
     if winners is None:
         return
+
+    logger.info("Monthly karaoke reset triggered for guild='%s': %d winner(s)", guild.name, len(winners))
 
     role_id = karaoke_points.get_role(guild.id)
     role = guild.get_role(role_id) if role_id is not None else None
@@ -114,22 +123,24 @@ async def apply_monthly_reset(guild: discord.Guild, karaoke_points) -> None:
     new_winner_ids = []
     if role is not None:
         previous_winner_ids = karaoke_points.get_current_winners(guild.id)
+        logger.info("Removing karaoke winner role from %d previous winner(s) in guild='%s'", len(previous_winner_ids), guild.name)
         for user_id in previous_winner_ids:
             member = await _fetch_member(guild, user_id)
             if member is not None and role in member.roles:
                 await member.remove_roles(role)
+                logger.info("Removed karaoke winner role from %s in guild='%s'", member, guild.name)
 
+        logger.info("Granting karaoke winner role to %d new winner(s) in guild='%s'", len(winners), guild.name)
         for entry in winners:
             member = await _fetch_member(guild, entry["user_id"])
             if member is not None:
                 await member.add_roles(role)
                 new_winner_ids.append(entry["user_id"])
+                logger.info("Granted karaoke winner role to %s in guild='%s'", member, guild.name)
+            else:
+                logger.warning("Could not find member %s to grant karaoke winner role in guild='%s'", entry["user_id"], guild.name)
 
-        logger.info(
-            "Applied monthly karaoke winner role in guild='%s' to %d winner(s)",
-            guild.name,
-            len(new_winner_ids),
-        )
+        logger.info("Applied monthly karaoke winner role in guild='%s' to %d winner(s)", guild.name, len(new_winner_ids))
     else:
         new_winner_ids = [entry["user_id"] for entry in winners]
         if role_id is None:
@@ -143,6 +154,9 @@ async def apply_monthly_reset(guild: discord.Guild, karaoke_points) -> None:
 
     karaoke_points.set_current_winners(guild.id, new_winner_ids)
     logger.info("Registered %d karaoke winner(s) in DB for guild='%s'", len(new_winner_ids), guild.name)
+
+    karaoke_points.commit_monthly_reset(guild.id)
+    logger.info("Monthly karaoke reset complete for guild='%s'", guild.name)
 
 
 def setup(bot, karaoke_points=None):
@@ -168,6 +182,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kadd", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
+    @app_commands.guild_only()
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
         logger.info("/kadd called by %s (guild=%s)", interaction.user, interaction.guild_id)
 
@@ -177,6 +192,7 @@ def setup(bot, karaoke_points=None):
             return
 
         queue = _get_queue(interaction)
+        was_empty = len(queue) == 0
         entry = {
             "id": interaction.user.id,
             "name": interaction.user.display_name or interaction.user.name,
@@ -184,12 +200,15 @@ def setup(bot, karaoke_points=None):
             "artist": artist,
         }
         queue.append(entry)
+        if was_empty:
+            karaoke_turn_start_times[_queue_key(interaction)] = time.monotonic()
         label = _song_label(entry)
         logger.info("/kadd: added %s to queue%s (queue size=%d)", interaction.user, label, len(queue))
         await interaction.response.send_message(f"🎤 {interaction.user.mention} joined the karaoke queue{label}.")
 
     @bot.tree.command(name="kremove", description="Remove a user from the karaoke queue by their queue position")
     @app_commands.describe(position="The 1-based queue position to remove")
+    @app_commands.guild_only()
     async def karaoke_remove(interaction: discord.Interaction, position: int | None = None):
         logger.info("/kremove called by %s (guild=%s, position=%s)", interaction.user, interaction.guild_id, position)
         queue = _get_queue(interaction)
@@ -218,6 +237,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kbump", description="Move yourself or a queued entry to the top of the karaoke queue")
     @app_commands.describe(position="The 1-based queue position to bump to the top")
+    @app_commands.guild_only()
     async def karaoke_bump(interaction: discord.Interaction, position: int | None = None):
         logger.info("/kbump called by %s (guild=%s, position=%s)", interaction.user, interaction.guild_id, position)
         queue = _get_queue(interaction)
@@ -248,6 +268,7 @@ def setup(bot, karaoke_points=None):
         )
 
     @bot.tree.command(name="knext", description="Move to the next person in the karaoke queue")
+    @app_commands.guild_only()
     async def karaoke_next(interaction: discord.Interaction):
         logger.info("/knext called by %s (guild=%s)", interaction.user, interaction.guild_id)
         queue = _get_queue(interaction)
@@ -257,10 +278,14 @@ def setup(bot, karaoke_points=None):
             await interaction.response.send_message("🎤 The karaoke queue is already empty.")
             return
 
+        key = _queue_key(interaction)
         current = queue.pop(0)
 
-        # Award points silently
-        if karaoke_points is not None and interaction.guild is not None:
+        turn_start = karaoke_turn_start_times.pop(key, None)
+        turn_too_short = turn_start is not None and (time.monotonic() - turn_start) < _MIN_TURN_SECONDS
+
+        # Award points silently (skip if turn was under 10 seconds)
+        if not turn_too_short and karaoke_points is not None and interaction.guild is not None:
             singer = interaction.guild.get_member(current["id"])
             if singer is None:
                 try:
@@ -280,11 +305,14 @@ def setup(bot, karaoke_points=None):
                     logger.info("/knext: awarded %d point(s) to %s (audience=%d, guild=%s)", pts, current["id"], audience_count, interaction.guild_id)
                 else:
                     logger.info("/knext: no points for %s — singing alone in VC (guild=%s)", current["id"], interaction.guild_id)
+        elif turn_too_short:
+            logger.info("/knext: skipping points for %s — turn ended in under %gs (guild=%s)", current["id"], _MIN_TURN_SECONDS, interaction.guild_id)
         elif karaoke_points is not None:
             logger.info("/knext: guild not available for interaction, skipping points for %s", current["id"])
 
         if queue:
             next_up = queue[0]
+            karaoke_turn_start_times[key] = time.monotonic()
             logger.info("/knext: advanced past %s, next is %s (queue size=%d)", current["id"], next_up["id"], len(queue))
             await interaction.response.send_message(
                 f"➡️ Thanks {current['name']}! Next up: <@{next_up['id']}>{_song_label(next_up)}."
@@ -296,11 +324,13 @@ def setup(bot, karaoke_points=None):
             )
 
     @bot.tree.command(name="kqueue", description="Show the current karaoke queue")
+    @app_commands.guild_only()
     async def karaoke_queue_view(interaction: discord.Interaction):
         logger.info("/kqueue called by %s (guild=%s, queue size=%d)", interaction.user, interaction.guild_id, len(_get_queue(interaction)))
         await interaction.response.send_message(embed=_queue_display(interaction))
 
     @bot.tree.command(name="klb", description="Show the monthly karaoke leaderboard")
+    @app_commands.guild_only()
     async def karaoke_leaderboard(interaction: discord.Interaction):
         logger.info("/klb called by %s (guild=%s)", interaction.user, interaction.guild_id)
         if karaoke_points is None:
@@ -310,6 +340,7 @@ def setup(bot, karaoke_points=None):
         await interaction.response.send_message(embed=_leaderboard_embed("🎤 Karaoke — Monthly Leaderboard", entries))
 
     @bot.tree.command(name="klb-alltime", description="Show the all-time karaoke leaderboard")
+    @app_commands.guild_only()
     async def karaoke_leaderboard_alltime(interaction: discord.Interaction):
         logger.info("/klb-alltime called by %s (guild=%s)", interaction.user, interaction.guild_id)
         if karaoke_points is None:
@@ -320,6 +351,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kscore", description="Check a user's karaoke points")
     @app_commands.describe(user="The user to look up (defaults to yourself)")
+    @app_commands.guild_only()
     async def karaoke_score(interaction: discord.Interaction, user: discord.Member | None = None):
         target = user or interaction.user
         logger.info("/kscore called by %s for %s (guild=%s)", interaction.user, target, interaction.guild_id)
@@ -340,6 +372,7 @@ def setup(bot, karaoke_points=None):
         app_commands.Choice(name="on", value="on"),
         app_commands.Choice(name="off", value="off"),
     ])
+    @app_commands.guild_only()
     async def karaoke_notice_cmd(interaction: discord.Interaction, state: Optional[str] = None):
         logger.info("/knotice called by %s (guild=%s, state=%s)", interaction.user, interaction.guild_id, state)
         guild_id = interaction.guild_id

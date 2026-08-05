@@ -74,80 +74,71 @@ class ChineseDictionary:
         self.by_traditional = {}
         self.by_pinyin = {}
 
-    def load_dictionary(self):
+    def _parse_cedict(self, lines) -> None:
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = re.match(r'^(\S+)\s+(\S+)\s+\[(.*?)\]\s+/(.*)/$', line)
+            if not match:
+                continue
+            trad, simp, pinyin_raw, defs_raw = match.groups()
+            raw_definitions = [d.strip() for d in defs_raw.split('/') if d.strip()]
+            definitions = []
+            measure_words = []
+            variants = []
+            for d in raw_definitions:
+                if d.startswith("CL:"):
+                    classifiers = d[3:].split(',')
+                    for cl in classifiers:
+                        cl_match = re.match(r'([^\[]+)(?:\[(.*?)\])?', cl)
+                        if cl_match:
+                            chars, pin = cl_match.groups()
+                            if pin:
+                                measure_words.append(f"{chars} (`{convert_pinyin_sentence(pin)}`)")
+                            else:
+                                measure_words.append(chars)
+                    continue
+                if "variant of" in d or "old variant of" in d:
+                    variants.append(d)
+                    continue
+                d = d.replace("fig.", "*fig.*").replace("lit.", "*lit.*")
+                definitions.append(d)
+            entry = {
+                "traditional": trad,
+                "simplified": simp,
+                "pinyin_raw": pinyin_raw,
+                "pinyin": convert_pinyin_sentence(pinyin_raw),
+                "definitions": definitions,
+                "measure_words": measure_words,
+                "variants": variants
+            }
+            self.by_simplified[simp] = entry
+            self.by_traditional[trad] = entry
+            self.by_pinyin[pinyin_raw.lower().replace(" ", "")] = entry
+            self.by_pinyin[entry["pinyin"].lower().replace(" ", "")] = entry
+        logger.info("Loaded %d entries into memory!", len(self.by_simplified))
+
+    def load_dictionary(self, cache_path: str | None = None) -> None:
+        if cache_path and os.path.exists(cache_path):
+            logger.info("Loading CEDICT from disk cache: %s", cache_path)
+            with open(cache_path, "r", encoding="utf-8") as f:
+                self._parse_cedict(f)
+            return
+
         logger.info("Starting dictionary download from GitHub mirror...")
-        
-        req = urllib.request.Request(
-            CEDICT_URL, 
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
-        
+        req = urllib.request.Request(CEDICT_URL, headers={'User-Agent': 'Mozilla/5.0'})
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
-                for line_num, line_bytes in enumerate(response, 1):
-                    line = line_bytes.decode('utf-8').strip()
-                    
-                    if not line or line.startswith("#"): 
-                        continue
-                    
-                    match = re.match(r'^(\S+)\s+(\S+)\s+\[(.*?)\]\s+/(.*)/$', line)
-                    
-                    if match:
-                        trad, simp, pinyin_raw, defs_raw = match.groups()
-                        
-                        # Process raw definitions
-                        raw_definitions = [d.strip() for d in defs_raw.split('/') if d.strip()]
-                        
-                        definitions = []
-                        measure_words = []
-                        variants = []
-                        
-                        for d in raw_definitions:
-                            # 1. Extract Measure Words (CL:...)
-                            if d.startswith("CL:"):
-                                # Strip 'CL:' and clean up the classifiers
-                                classifiers = d[3:].split(',')
-                                for cl in classifiers:
-                                    # Clean up format like 隻|只[zhi1] to nice tone marks
-                                    cl_match = re.match(r'([^\[]+)(?:\[(.*?)\])?', cl)
-                                    if cl_match:
-                                        chars, pin = cl_match.groups()
-                                        if pin:
-                                            formatted_pin = convert_pinyin_sentence(pin)
-                                            measure_words.append(f"{chars} (`{formatted_pin}`)")
-                                        else:
-                                            measure_words.append(chars)
-                                continue
-                            
-                            # 2. Extract Variant indicators
-                            if "variant of" in d or "old variant of" in d:
-                                variants.append(d)
-                                continue
-                                
-                            # 3. Format figurative/literal annotations nicely
-                            d = d.replace("fig.", "*fig.*").replace("lit.", "*lit.*")
-                            definitions.append(d)
-                        
-                        entry = {
-                            "traditional": trad,
-                            "simplified": simp,
-                            "pinyin_raw": pinyin_raw,
-                            "pinyin": convert_pinyin_sentence(pinyin_raw),
-                            "definitions": definitions,
-                            "measure_words": measure_words,
-                            "variants": variants
-                        }
-                        
-                        # Indexing
-                        self.by_simplified[simp] = entry
-                        self.by_traditional[trad] = entry
-                        
-                        # Store both raw pinyin ('ni3hao3') and clean tone-marked version for searches
-                        self.by_pinyin[pinyin_raw.lower().replace(" ", "")] = entry
-                        self.by_pinyin[entry["pinyin"].lower().replace(" ", "")] = entry
-
-            logger.info("Loaded %d entries into memory!", len(self.by_simplified))
-            
+                raw = response.read()
+            if cache_path:
+                cache_dir = os.path.dirname(cache_path)
+                if cache_dir:
+                    os.makedirs(cache_dir, exist_ok=True)
+                with open(cache_path, "wb") as f:
+                    f.write(raw)
+                logger.info("Saved CEDICT cache to %s (%d bytes)", cache_path, len(raw))
+            self._parse_cedict(raw.decode("utf-8").splitlines())
         except Exception as e:
             logger.error("Failed to download or parse the dictionary: %s", e)
 

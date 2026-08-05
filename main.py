@@ -14,6 +14,7 @@ import dictionary_commands
 import general_commands
 import karaoke_points as karaoke_points_module
 import startup_checks
+from bot_policy import SERVER_ONLY_MESSAGE
 from dictionary import ChineseDictionary, XinhuaDictionary
 from karaoke import apply_monthly_reset as apply_karaoke_monthly_reset
 from karaoke import karaoke_queues
@@ -28,7 +29,8 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE_PATH = os.getenv("DATABASE_PATH")
 CHENGYU_DB_PATH = os.path.join(DATABASE_PATH, "chengyu.db") if DATABASE_PATH else "chengyu.db"
 KARAOKE_DB_PATH = os.path.join(DATABASE_PATH, "karaoke.db") if DATABASE_PATH else "karaoke.db"
-XINHUA_DATA_DIR = os.getenv("XINHUA_DATA_DIR", "data")
+XINHUA_DATA_DIR = os.getenv("XINHUA_DATA_DIR", DATABASE_PATH or "data")
+CEDICT_CACHE_PATH = os.path.join(DATABASE_PATH, "cedict.txt") if DATABASE_PATH else None
 
 try:
     startup_checks.check_filesystem(CHENGYU_DB_PATH, XINHUA_DATA_DIR)
@@ -44,7 +46,7 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 BOT_START_TIME = datetime.now(timezone.utc)
 
 dictionary = ChineseDictionary()
-xinhua_dictionary = XinhuaDictionary()
+xinhua_dictionary = XinhuaDictionary(data_dir=XINHUA_DATA_DIR)
 chengyu_game = chengyu.ChengyuGame(dictionary=dictionary, db_path=CHENGYU_DB_PATH)
 karaoke_pts = karaoke_points_module.KaraokePoints(db_path=KARAOKE_DB_PATH)
 
@@ -57,7 +59,7 @@ general_commands.setup(bot)
 
 
 def _load_dictionaries():
-    dictionary.load_dictionary()
+    dictionary.load_dictionary(cache_path=CEDICT_CACHE_PATH)
     xinhua_dictionary.load()
     for idiom in xinhua_dictionary.idioms.values():
         converted = xinhua_dictionary.to_chengyu_entry(idiom)
@@ -76,6 +78,14 @@ def _load_dictionaries():
 
 
 async def global_interaction_check(interaction: discord.Interaction) -> bool:
+    if interaction.guild_id is None:
+        await interaction.response.send_message(SERVER_ONLY_MESSAGE)
+        logger.info(
+            "Rejected DM interaction from %s (command='%s')",
+            interaction.user,
+            interaction.command.name if interaction.command else "unknown",
+        )
+        return False
     if interaction.created_at < BOT_START_TIME:
         logger.debug("Discarding replayed interaction from before bot start (command='%s', created=%s)", interaction.command.name if interaction.command else "unknown", interaction.created_at)
         return False

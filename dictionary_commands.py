@@ -67,6 +67,7 @@ def format_xinhua_embed(result: tuple[str, dict]) -> discord.Embed:
 def setup(bot, dictionary, xinhua_dictionary) -> None:
     @bot.tree.command(name="define", description="Look up a Chinese word or search in English!")
     @app_commands.describe(query="Chinese characters, Pinyin, or an English word")
+    @app_commands.guild_only()
     async def define(interaction: discord.Interaction, query: str):
         logger.info("/define triggered by %s in guild='%s': query='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, query)
         await interaction.response.defer()
@@ -151,6 +152,7 @@ def setup(bot, dictionary, xinhua_dictionary) -> None:
 def setup_owner_commands(bot) -> None:
     @bot.command()
     @commands.is_owner()
+    @commands.guild_only()
     async def sync(ctx):
         logger.info("!sync triggered by %s", ctx.author)
         try:
