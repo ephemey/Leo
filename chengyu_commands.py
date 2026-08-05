@@ -233,13 +233,6 @@ def setup(bot, chengyu_game, dictionary) -> None:
             await interaction.response.send_message(f"✅ Chengyu Jielong is set to {channel.mention} with the {role.mention} winner role.")
         else:
             await interaction.response.send_message(f"✅ Chengyu Jielong is set to {channel.mention}. No winner role configured.")
-        # Clear monthly scores and used entries when reconfiguring
-        try:
-            chengyu_game.reset_monthly_state(interaction.guild_id)
-        except Exception:
-            # ignore DB hiccups for now
-            pass
-
         # Post a random starting idiom in the configured channel to kick off play
         try:
             starter = chengyu_game.get_random_unused_idiom(interaction.guild_id, channel.id)
