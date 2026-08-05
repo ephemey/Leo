@@ -166,6 +166,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kadd", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
+    @app_commands.guild_only()
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
         logger.info("/kadd called by %s (guild=%s)", interaction.user, interaction.guild_id)
 
@@ -188,6 +189,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kremove", description="Remove a user from the karaoke queue by their queue position")
     @app_commands.describe(position="The 1-based queue position to remove")
+    @app_commands.guild_only()
     async def karaoke_remove(interaction: discord.Interaction, position: int | None = None):
         logger.info("/kremove called by %s (guild=%s, position=%s)", interaction.user, interaction.guild_id, position)
         queue = _get_queue(interaction)
@@ -216,6 +218,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kbump", description="Move yourself or a queued entry to the top of the karaoke queue")
     @app_commands.describe(position="The 1-based queue position to bump to the top")
+    @app_commands.guild_only()
     async def karaoke_bump(interaction: discord.Interaction, position: int | None = None):
         logger.info("/kbump called by %s (guild=%s, position=%s)", interaction.user, interaction.guild_id, position)
         queue = _get_queue(interaction)
@@ -246,6 +249,7 @@ def setup(bot, karaoke_points=None):
         )
 
     @bot.tree.command(name="knext", description="Move to the next person in the karaoke queue")
+    @app_commands.guild_only()
     async def karaoke_next(interaction: discord.Interaction):
         logger.info("/knext called by %s (guild=%s)", interaction.user, interaction.guild_id)
         queue = _get_queue(interaction)
@@ -294,11 +298,13 @@ def setup(bot, karaoke_points=None):
             )
 
     @bot.tree.command(name="kqueue", description="Show the current karaoke queue")
+    @app_commands.guild_only()
     async def karaoke_queue_view(interaction: discord.Interaction):
         logger.info("/kqueue called by %s (guild=%s, queue size=%d)", interaction.user, interaction.guild_id, len(_get_queue(interaction)))
         await interaction.response.send_message(embed=_queue_display(interaction))
 
     @bot.tree.command(name="klb", description="Show the monthly karaoke leaderboard")
+    @app_commands.guild_only()
     async def karaoke_leaderboard(interaction: discord.Interaction):
         logger.info("/klb called by %s (guild=%s)", interaction.user, interaction.guild_id)
         if karaoke_points is None:
@@ -308,6 +314,7 @@ def setup(bot, karaoke_points=None):
         await interaction.response.send_message(embed=_leaderboard_embed("🎤 Karaoke — Monthly Leaderboard", entries))
 
     @bot.tree.command(name="klb-alltime", description="Show the all-time karaoke leaderboard")
+    @app_commands.guild_only()
     async def karaoke_leaderboard_alltime(interaction: discord.Interaction):
         logger.info("/klb-alltime called by %s (guild=%s)", interaction.user, interaction.guild_id)
         if karaoke_points is None:
@@ -318,6 +325,7 @@ def setup(bot, karaoke_points=None):
 
     @bot.tree.command(name="kscore", description="Check a user's karaoke points")
     @app_commands.describe(user="The user to look up (defaults to yourself)")
+    @app_commands.guild_only()
     async def karaoke_score(interaction: discord.Interaction, user: discord.Member | None = None):
         target = user or interaction.user
         logger.info("/kscore called by %s for %s (guild=%s)", interaction.user, target, interaction.guild_id)
@@ -338,6 +346,7 @@ def setup(bot, karaoke_points=None):
         app_commands.Choice(name="on", value="on"),
         app_commands.Choice(name="off", value="off"),
     ])
+    @app_commands.guild_only()
     async def karaoke_notice_cmd(interaction: discord.Interaction, state: Optional[str] = None):
         logger.info("/knotice called by %s (guild=%s, state=%s)", interaction.user, interaction.guild_id, state)
         guild_id = interaction.guild_id

@@ -1,18 +1,21 @@
 import logging
 
 import discord
+from discord import app_commands
 
 logger = logging.getLogger(__name__)
 
 
 def setup(bot) -> None:
     @bot.tree.command(name="ping", description="Replies with Pong and the bot's latency!")
+    @app_commands.guild_only()
     async def ping(interaction: discord.Interaction):
         logger.info("/ping triggered by %s in guild=%s", interaction.user, interaction.guild_id)
         latency = round(bot.latency * 1000)
         await interaction.response.send_message(f"Pong! 🏓 ({latency}ms)")
 
     @bot.tree.command(name="help", description="List all available commands")
+    @app_commands.guild_only()
     async def help_command(interaction: discord.Interaction):
         logger.info("/help triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         embed = discord.Embed(title="Commands", color=discord.Color.blurple())

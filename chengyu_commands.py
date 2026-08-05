@@ -4,6 +4,7 @@ import re
 import discord
 from discord import app_commands
 
+from bot_policy import SERVER_ONLY_MESSAGE
 from startup_checks import REQUIRED_CHANNEL_PERMISSIONS
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,17 @@ async def _safe_send(coro, description: str, channel: discord.TextChannel) -> No
 def setup(bot, chengyu_game, dictionary) -> None:
     @bot.event
     async def on_message(message: discord.Message):
-        if message.author.bot or not message.guild or not isinstance(message.channel, discord.TextChannel):
+        if message.author.bot:
+            return
+
+        if message.guild is None:
+            try:
+                await message.channel.send(SERVER_ONLY_MESSAGE)
+            except discord.HTTPException as e:
+                logger.warning("Failed to send server-only DM notice: %s", e)
+            return
+
+        if not isinstance(message.channel, discord.TextChannel):
             return
 
         configured_channel_id = chengyu_game.get_channel(message.guild.id)
@@ -196,6 +207,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         channel="The text channel to use for Chengyu submissions",
         role="Optional role to grant to the top three monthly winners"
     )
+    @app_commands.guild_only()
     async def cysetup(interaction: discord.Interaction, channel: discord.TextChannel, role: discord.Role | None = None):
         logger.info("/cysetup triggered by %s in guild='%s': channel=%s role=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, channel.id, role.id if role else None)
         chengyu_game.set_channel(interaction.guild_id, channel.id, role.id if role else None)
@@ -222,6 +234,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             pass
 
     @bot.tree.command(name="cylb", description="Show the Chengyu Jielong leaderboard for this server")
+    @app_commands.guild_only()
     async def cylb(interaction: discord.Interaction):
         logger.info("/cylb triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         leaderboard = chengyu_game.get_leaderboard(interaction.guild_id or 0)
@@ -241,6 +254,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         await interaction.response.send_message(embed=embed)
 
     @bot.tree.command(name="cylb-alltime", description="Show the all-time Chengyu Jielong leaderboard for this server")
+    @app_commands.guild_only()
     async def cylb_alltime(interaction: discord.Interaction):
         logger.info("/cylb-alltime triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         leaderboard = chengyu_game.get_alltime_leaderboard(interaction.guild_id or 0)
@@ -260,6 +274,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         await interaction.response.send_message(embed=embed)
 
     @bot.tree.command(name="timer", description="Show how long until all monthly leaderboards reset")
+    @app_commands.guild_only()
     async def timer(interaction: discord.Interaction):
         logger.info("/timer triggered by %s in guild='%s'", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id)
         delta = chengyu_game.get_time_until_reset()
@@ -271,6 +286,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
 
     @bot.tree.command(name="cyscore", description="Show the current Chengyu score for a user")
     @app_commands.describe(user="Optional user to look up; defaults to you")
+    @app_commands.guild_only()
     async def cyscore(interaction: discord.Interaction, user: discord.Member | None = None):
         logger.info("/cyscore triggered by %s in guild='%s' for user=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, user.id if user else interaction.user.id)
         target_user = user or interaction.user
@@ -285,6 +301,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
         )
 
     @bot.tree.command(name="cycurrent", description="Show the most recent valid Chengyu entry in this channel")
+    @app_commands.guild_only()
     async def cycurrent(interaction: discord.Interaction):
         logger.info("/cycurrent triggered by %s in guild='%s' channel=%s", interaction.user, interaction.guild.name if interaction.guild else interaction.guild_id, interaction.channel_id if interaction.channel else None)
         if not interaction.guild_id or not interaction.channel:

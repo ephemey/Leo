@@ -12,13 +12,12 @@ adding poetry / longer idioms to chengyu dictionary
 need to be able to export / display current chengyu scores as there is no way to view Railway's volume
 
 - There is no /khelp command in this file itself
-- The "participating user" is identified purely by interaction.user.id — the Discord user who ran the slash command. There is no linkage to voice state at all; a user could run /kadd without being in any voice channel.
+
 Gap: startup_checks.check_filesystem (called before the bot connects) only pre-validates the chengyu DB directory (main.py:32, startup_checks.py:18-25) — the karaoke DB path isn't checked at startup. If DATABASE_PATH is misconfigured or unwritable, chengyu fails fast with a clear error, but karaoke would only fail lazily inside KaraokePoints.__init__ a few lines later with a raw sqlite3.OperationalError. Not something you asked me to fix, but worth knowing — say the word if you want that startup check extended to cover karaoke.db too.
 
-karaoke / chengyu winners db editing
 
-all commands should be server-only, not in DMs
-
+Confirm trad<->simp conversion is working as intended especially for chengyu jielong
+    - xinhua dictionary only has simplified :(
 
 Issues: 
 
@@ -62,8 +61,6 @@ Any member can reconfigure the Chengyu channel/role and reset monthly scores. Se
 High priority
 
 
-An unconfigured Chengyu game accepts idioms in every text channel.
-The handler only rejects the message when a configured channel exists and differs. If none exists, every channel is eligible. See [chengyu_commands.py (line 116)](/workspaces/Leo/chengyu_commands.py:116). Return immediately when get_channel() is None.
 
 Chengyu chain state is lost on restart.
 Used entries persist, but the current/previous idiom exists only in channel_states memory at [chengyu.py (line 292)](/workspaces/Leo/chengyu.py:292). After restart, the next unused four-character idiom is accepted without matching the previous chain. Persist the current entry, ideally as part of the same transaction that records the score and marks the entry used.
