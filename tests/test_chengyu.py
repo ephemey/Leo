@@ -113,13 +113,17 @@ class ChengyuGameTests(unittest.TestCase):
         self.assertIn("Alice", message)
         self.assertIn("惊天动地", message)
 
-    def test_only_four_character_chinese_entries_are_valid(self):
+    def test_only_four_or_more_character_chinese_entries_are_valid(self):
         game = chengyu.ChengyuGame(db_path=':memory:')
         chinese_word = {"simplified": "敦煌石窟", "pinyin_raw": "dun1 huang2 shi2 ku1", "definitions": ["cave complex in Dunhuang"]}
         non_chinese_word = {"simplified": "abcd", "pinyin_raw": "a b c d", "definitions": ["not Chinese"]}
+        short_word = {"simplified": "你好", "pinyin_raw": "ni3 hao3", "definitions": ["hello"]}
+        long_word = {"simplified": "一诺千金重", "pinyin_raw": "yi1 nuo4 qian1 jin1 zhong4", "definitions": ["longer than four characters"]}
 
         self.assertTrue(game.is_valid_chengyu(chinese_word))
+        self.assertTrue(game.is_valid_chengyu(long_word))
         self.assertFalse(game.is_valid_chengyu(non_chinese_word))
+        self.assertFalse(game.is_valid_chengyu(short_word))
 
     def test_xinhua_idiom_entries_are_valid(self):
         game = chengyu.ChengyuGame(db_path=':memory:')

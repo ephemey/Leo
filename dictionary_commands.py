@@ -154,11 +154,11 @@ def setup_owner_commands(bot) -> None:
     @commands.is_owner()
     @commands.guild_only()
     async def sync(ctx):
-        logger.info("!sync triggered by %s", ctx.author)
+        logger.info("Command sync triggered by %s", ctx.author)
         try:
             synced = await bot.tree.sync()
             await ctx.send(f"Successfully synced {len(synced)} slash command(s) globally!")
-            logger.info("Synced %d slash command(s) via !sync", len(synced))
+            logger.info("Synced %d slash command(s) via owner command", len(synced))
         except Exception as e:
             await ctx.send(f"Failed to sync commands: {e}")
-            logger.error("Failed to sync commands via !sync: %s", e)
+            logger.error("Failed to sync commands via owner command: %s", e)

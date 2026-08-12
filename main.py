@@ -44,6 +44,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 BOT_START_TIME = datetime.now(timezone.utc)
+DICTIONARIES_LOADED = False
 
 dictionary = ChineseDictionary()
 xinhua_dictionary = XinhuaDictionary(data_dir=XINHUA_DATA_DIR)
@@ -120,24 +121,36 @@ async def monthly_reset_check():
 
 
 @bot.event
+async def on_disconnect():
+    logger.warning("Disconnected from Discord Gateway")
+
+
+@bot.event
+async def on_resumed():
+    logger.info("Resumed existing Discord Gateway session")
+
+
+@bot.event
 async def on_ready():
+    global DICTIONARIES_LOADED
+
     queue_count = len(karaoke_queues)
     karaoke_queues.clear()
     logger.info("Cleared %d karaoke queue(s) on startup", queue_count)
 
-    await asyncio.to_thread(_load_dictionaries)
+    if not DICTIONARIES_LOADED:
+        await asyncio.to_thread(_load_dictionaries)
+        DICTIONARIES_LOADED = True
+    else:
+        logger.info("Dictionaries already loaded; skipping reload after reconnect")
 
     logger.info("Logged in as %s", bot.user.name)
-    try:
-        synced = await bot.tree.sync()
-        logger.info("Successfully synced %d slash command(s) globally.", len(synced))
-    except Exception as e:
-        logger.error("Error syncing commands: %s", e)
-
-    startup_checks.check_discord_permissions(bot, chengyu_game)
 
     if not monthly_reset_check.is_running():
+        startup_checks.check_discord_permissions(bot, chengyu_game)
         monthly_reset_check.start()
+    else:
+        logger.info("Skipping permission checks after reconnect")
 
 
 try:

@@ -249,7 +249,7 @@ class ChengyuGame:
             return False
 
         text = (entry.get("simplified") or entry.get("traditional") or entry.get("word") or "").strip()
-        if not text or len(text) != 4:
+        if not text or len(text) < 4:
             return False
 
         if not all("\u4e00" <= ch <= "\u9fff" for ch in text):

@@ -145,7 +145,7 @@ def setup(bot, chengyu_game, dictionary) -> None:
             return
 
         cleaned_text = re.sub(r"[^一-鿿]", "", message.content)
-        if len(cleaned_text) != 4:
+        if len(cleaned_text) < 4:
             return
 
         entry = dictionary.search(cleaned_text)

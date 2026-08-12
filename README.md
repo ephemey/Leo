@@ -62,12 +62,6 @@ Chengyu scores and the checkpoint are finalized before Discord role/message oper
 
 ### Important current findings
 
-1. **High — New Chengyu reset regression.**
-   The reset marks and stores the new starter in `chengyu_commands.py`, then `commit_monthly_reset()` deletes every used entry in `chengyu.py`. The starter remains the current channel state but is no longer considered used, so it can be submitted again for a point.
-
-2. **High — Karaoke farming is only slightly mitigated.**
-   The ten-second timer prevents immediate advancement, but duplicate `/kadd` entries are still allowed, anyone can remove or bump another entry, and `/knext` remains unrestricted. Bumping or removing the current singer does not reset the timer, so a newly bumped singer can inherit the previous singer's elapsed time and immediately receive points. Waiting ten seconds also does not demonstrate that a song was performed.
-
 3. **High — Reset recovery is improved, but not complete.**
    Discord failures before the final commit will now generally be retried. However, score deletion and checkpoint advancement are separate commits, so a crash between them still loses scores while leaving the reset pending. Retried Discord operations can produce duplicate announcements, Chengyu state is mutated before the announcement succeeds, and the existing tests no longer agree with the changed two-phase API.
 
@@ -78,7 +72,7 @@ Chengyu scores and the checkpoint are finalized before Discord role/message oper
 | Karaoke score farming/queue manipulation | **Partial** | Ten-second timer added, but duplicates, unrestricted controls, and timer inheritance remain |
 | Chengyu active before `/cysetup` | **Resolved** | Handler now returns when no channel is configured |
 | Tracked operational `chengyu.db` | **Not resolved** | The database remains tracked despite `*.db` in `.gitignore` |
-| `/cysetup` unrestricted and destructive | **Partial** | It is now owner-only, but still clears monthly scores and silently swallows errors |
+| `/cysetup` unrestricted and destructive | **Resolved** | It is now owner-only and no longer clears monthly scores; still silently swallows starter-idiom errors |
 | Monthly-reset side effects unrecoverable | **Partial** | Retry behavior improved, but commits are not atomic and side effects are not exactly-once |
 | Privacy cleanup when bot leaves a server | **Not resolved** | No `on_guild_remove` cleanup |
 | Front-end Chengyu dictionary editing | **Not resolved** | No front-end editor |
