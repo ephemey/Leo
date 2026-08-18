@@ -144,7 +144,8 @@ def setup(bot, chengyu_game, dictionary) -> None:
         if not message.content.strip():
             return
 
-        cleaned_text = re.sub(r"[^一-鿿]", "", message.content)
+        cleaned_text = re.sub(r"[^\u4e00-\u9fff，]", "", message.content)
+
         if len(cleaned_text) < 4:
             return
 
