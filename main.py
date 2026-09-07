@@ -165,3 +165,15 @@ except discord.PrivilegedIntentsRequired as e:
 except discord.LoginFailure as e:
     logger.error("Failed to log in to Discord: %s. Check DISCORD_TOKEN.", e)
     raise SystemExit(1) from e
+except discord.HTTPException as e:
+    if e.status != 429:
+        raise
+
+    retry_after = e.response.headers.get("Retry-After", "unknown")
+    logger.critical(
+        "Discord API temporarily blocked bot startup (HTTP 429; Retry-After=%s). "
+        "Stopping without retry to avoid a deployment restart loop. Wait for "
+        "Discord's rate limit to clear before restarting the bot manually.",
+        retry_after,
+    )
+    raise SystemExit(0) from e
