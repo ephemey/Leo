@@ -40,7 +40,7 @@ def setup(bot) -> None:
 
         embed.add_field(name="Karaoke", value=(
             "`/ksetup <role>` — Set the monthly winner role (bot owner only)\n"
-            "`/kadd [song] [artist]` — Join the karaoke queue with an optional song and artist\n"
+            "`/kjoin [song] [artist]` — Join the karaoke queue with an optional song and artist\n"
             "`/kremove [position]` — Remove yourself, or a position from the queue\n"
             "`/kbump [position]` — Move yourself or a position to the top\n"
             "`/knext` — Advance past the current singer\n"

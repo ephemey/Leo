@@ -86,7 +86,7 @@ def _leaderboard_embed(title: str, entries: list[dict]) -> discord.Embed:
     lines = []
     for i, entry in enumerate(entries[:10]):
         prefix = medals[i] if i < 3 else f"{i + 1}."
-        lines.append(f"{prefix} <@{entry['user_id']}> — {entry['points']} pts")
+        lines.append(f"{prefix} {entry['username']} — {entry['points']} pts")
     embed.description = "\n".join(lines)
     return embed
 
@@ -180,14 +180,22 @@ def setup(bot, karaoke_points=None):
             ephemeral=True,
         )
 
-    @bot.tree.command(name="kadd", description="Join the karaoke queue")
+    @bot.tree.command(name="kadd", description="Renamed to /kjoin — use /kjoin to join the karaoke queue")
+    @app_commands.guild_only()
+    async def karaoke_join_renamed(interaction: discord.Interaction):
+        await interaction.response.send_message(
+            "`/kadd` has been renamed to `/kjoin`. Please use `/kjoin` to join the karaoke queue.",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="kjoin", description="Join the karaoke queue")
     @app_commands.describe(song="Song title (optional)", artist="Artist name (optional)")
     @app_commands.guild_only()
     async def karaoke_join(interaction: discord.Interaction, song: str | None = None, artist: str | None = None):
-        logger.info("/kadd called by %s (guild=%s)", interaction.user, interaction.guild_id)
+        logger.info("/kjoin called by %s (guild=%s)", interaction.user, interaction.guild_id)
 
         if interaction.user.voice is None or interaction.user.voice.channel is None:
-            logger.info("/kadd: %s is not in a voice channel", interaction.user)
+            logger.info("/kjoin: %s is not in a voice channel", interaction.user)
             await interaction.response.send_message("❌ You must be in a voice channel to join the karaoke queue.", ephemeral=True)
             return
 
@@ -203,7 +211,7 @@ def setup(bot, karaoke_points=None):
         if was_empty:
             karaoke_turn_start_times[_queue_key(interaction)] = time.monotonic()
         label = _song_label(entry)
-        logger.info("/kadd: added %s to queue%s (queue size=%d)", interaction.user, label, len(queue))
+        logger.info("/kjoin: added %s to queue%s (queue size=%d)", interaction.user, label, len(queue))
         await interaction.response.send_message(f"🎤 {interaction.user.mention} joined the karaoke queue{label}.")
 
     @bot.tree.command(name="kremove", description="Remove a user from the karaoke queue by their queue position")
@@ -298,7 +306,10 @@ def setup(bot, karaoke_points=None):
                 logger.info("/knext: singer %s is not in a voice channel (guild=%s), skipping points", current["id"], interaction.guild_id)
             else:
                 vc = singer.voice.channel
-                audience_count = len(vc.members) - 1
+                audience_count = sum(
+                    1 for member in vc.members
+                    if not member.bot and member.id != singer.id
+                )
                 pts = karaoke_points.calculate_points(audience_count)
                 if pts > 0:
                     karaoke_points.record_points(interaction.guild_id, current["id"], current["name"], pts)

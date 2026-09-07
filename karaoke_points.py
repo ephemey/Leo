@@ -101,7 +101,7 @@ class KaraokePoints:
     def calculate_points(audience_count: int) -> int:
         """Points awarded to a singer based on how many others are in the voice channel.
 
-        audience_count = VC members excluding the singer.
+        audience_count = human VC members excluding the singer.
           0        → 0 pts (singing solo)
           1        → 5 pts (special case)
           2–14     → round(audience_count ** 1.2 * 10)
