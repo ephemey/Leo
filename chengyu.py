@@ -252,7 +252,7 @@ class ChengyuGame:
         if not text or len(text) < 4:
             return False
 
-        if not all("\u4e00" <= ch <= "\u9fff" for ch in text):
+        if not all("\u4e00" <= ch <= "\u9fff" or ch == "，" for ch in text):
             return False
 
         return True
