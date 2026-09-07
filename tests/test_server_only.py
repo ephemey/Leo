@@ -27,7 +27,7 @@ class ServerOnlyCommandTests(unittest.TestCase):
 
         commands_by_name = {command.name: command for command in bot.tree.get_commands()}
 
-        self.assertEqual(len(commands_by_name), 20)
+        self.assertEqual(len(commands_by_name), 21)
         self.assertTrue(
             all(command.guild_only for command in commands_by_name.values()),
             [

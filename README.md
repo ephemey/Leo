@@ -22,7 +22,7 @@ Confirm trad<->simp conversion is working as intended especially for chengyu jie
 Issues: 
 
 High — Karaoke points can be farmed and queues can be manipulated by any member.
-/kadd allows duplicate entries, while unrestricted /knext immediately awards points based only on current voice-channel attendance. A user can repeatedly add and advance themselves to accumulate points without completing a song. Any member can also remove or bump other users by position. See [karaoke.py (line 178)](/workspaces/Leo/karaoke.py:178), [karaoke.py (line 197)](/workspaces/Leo/karaoke.py:197), [karaoke.py (line 240)](/workspaces/Leo/karaoke.py:240), and [karaoke.py (line 262)](/workspaces/Leo/karaoke.py:262). Restrict moderation/advancement commands and prevent duplicate or rapid point awards.
+/kjoin allows duplicate entries, while unrestricted /knext immediately awards points based only on current voice-channel attendance. A user can repeatedly add and advance themselves to accumulate points without completing a song. Any member can also remove or bump other users by position. See [karaoke.py (line 178)](/workspaces/Leo/karaoke.py:178), [karaoke.py (line 197)](/workspaces/Leo/karaoke.py:197), [karaoke.py (line 240)](/workspaces/Leo/karaoke.py:240), and [karaoke.py (line 262)](/workspaces/Leo/karaoke.py:262). Restrict moderation/advancement commands and prevent duplicate or rapid point awards.
 
 High — Chengyu runs in every text channel before /cysetup.
 When no channel is configured, the handler does not return; it evaluates four-character messages server-wide and can award points/create independent chains. See [chengyu_commands.py (line 123)](/workspaces/Leo/chengyu_commands.py:123). It should return unless a configured channel exists and matches the message channel.
@@ -66,7 +66,7 @@ Chengyu scores and the checkpoint are finalized before Discord role/message oper
    The reset marks and stores the new starter in `chengyu_commands.py`, then `commit_monthly_reset()` deletes every used entry in `chengyu.py`. The starter remains the current channel state but is no longer considered used, so it can be submitted again for a point.
 
 2. **High — Karaoke farming is only slightly mitigated.**
-   The ten-second timer prevents immediate advancement, but duplicate `/kadd` entries are still allowed, anyone can remove or bump another entry, and `/knext` remains unrestricted. Bumping or removing the current singer does not reset the timer, so a newly bumped singer can inherit the previous singer's elapsed time and immediately receive points. Waiting ten seconds also does not demonstrate that a song was performed.
+   The ten-second timer prevents immediate advancement, but duplicate `/kjoin` entries are still allowed, anyone can remove or bump another entry, and `/knext` remains unrestricted. Bumping or removing the current singer does not reset the timer, so a newly bumped singer can inherit the previous singer's elapsed time and immediately receive points. Waiting ten seconds also does not demonstrate that a song was performed.
 
 3. **High — Reset recovery is improved, but not complete.**
    Discord failures before the final commit will now generally be retried. However, score deletion and checkpoint advancement are separate commits, so a crash between them still loses scores while leaving the reset pending. Retried Discord operations can produce duplicate announcements, Chengyu state is mutated before the announcement succeeds, and the existing tests no longer agree with the changed two-phase API.
