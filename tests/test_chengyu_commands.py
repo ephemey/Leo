@@ -235,7 +235,21 @@ class OnMessageChannelRestrictionTests(unittest.IsolatedAsyncioTestCase):
         game = chengyu.ChengyuGame(db_path=":memory:")
         dictionary = FakeDictionary(entries or {"画龙点睛": self.ENTRY})
         chengyu_commands.setup(bot, game, dictionary)
+        bot.process_commands = AsyncMock()
         return bot, game
+
+    async def test_mention_sync_is_processed_without_chengyu_channel(self):
+        bot, game = self._make_bot_and_game()
+        message = _make_message(
+            MagicMock(id=1, name="Test Guild"),
+            _make_text_channel(99, name="general"),
+            "<@123> sync",
+        )
+
+        await bot.on_message(message)
+
+        bot.process_commands.assert_awaited_once_with(message)
+        message.add_reaction.assert_not_called()
 
     async def test_ignored_when_no_channel_configured(self):
         bot, game = self._make_bot_and_game()

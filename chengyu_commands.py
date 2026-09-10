@@ -134,6 +134,10 @@ def setup(bot, chengyu_game, dictionary) -> None:
                 logger.warning("Failed to send server-only DM notice: %s", e)
             return
 
+        # This handler replaces Bot.on_message, so dispatch prefix commands
+        # before the Chengyu channel filters can discard them.
+        await bot.process_commands(message)
+
         if not isinstance(message.channel, discord.TextChannel):
             return
 
